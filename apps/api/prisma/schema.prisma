@@ -1,0 +1,667 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int            @id @default(autoincrement())
+  email          String         @unique @db.VarChar(255)
+  password       String         @db.VarChar(255)
+  name           String         @db.VarChar(100)
+  phone          String?        @db.VarChar(20)
+  role           UserRole
+  status         UserStatus     @default(ACTIVE)
+  branchId       Int?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  lastLoginAt    DateTime?
+  auditLogs      AuditLog[]
+  courierProfile Courier?
+  orders         Order[]        @relation("CreatedBy")
+  refreshTokens  RefreshToken[]
+  branch         Branch?        @relation(fields: [branchId], references: [id])
+
+  @@index([email])
+  @@index([role])
+  @@index([branchId])
+  @@index([status])
+  @@map("users")
+}
+
+model Branch {
+  id           Int           @id @default(autoincrement())
+  name         String        @db.VarChar(100)
+  address      String        @db.VarChar(500)
+  phone        String        @db.VarChar(20)
+  latitude     Decimal       @db.Decimal(10, 8)
+  longitude    Decimal       @db.Decimal(11, 8)
+  isActive     Boolean       @default(true)
+  workingHours Json
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  couriers     Courier[]
+  dailyReports DailyReport[]
+  orders       Order[]
+  stockItems   StockItem[]
+  users        User[]
+
+  @@index([isActive])
+  @@map("branches")
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique @db.VarChar(500)
+  userId    Int
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+model Order {
+  id                 Int                  @id @default(autoincrement())
+  orderNumber        String               @unique @db.VarChar(30)
+  platform           Platform
+  platformOrderId    String?              @db.VarChar(100)
+  status             OrderStatus          @default(PENDING)
+  customerId         Int?
+  customerName       String               @db.VarChar(100)
+  customerPhone      String               @db.VarChar(20)
+  customerAddress    String?              @db.VarChar(500)
+  customerNote       String?              @db.Text
+  latitude           Decimal?             @db.Decimal(10, 8)
+  longitude          Decimal?             @db.Decimal(11, 8)
+  subtotal           Decimal              @db.Decimal(10, 2)
+  discount           Decimal              @default(0.00) @db.Decimal(10, 2)
+  deliveryFee        Decimal              @default(0.00) @db.Decimal(10, 2)
+  platformCommission Decimal              @default(0.00) @db.Decimal(10, 2)
+  totalAmount        Decimal              @db.Decimal(10, 2)
+  netAmount          Decimal              @db.Decimal(10, 2)
+  paymentMethod      PaymentMethod
+  paymentStatus      PaymentStatus        @default(PENDING)
+  courierId          Int?
+  estimatedDelivery  DateTime?
+  actualDelivery     DateTime?
+  deliveryDuration   Int?
+  branchId           Int
+  createdById        Int?
+  confirmedAt        DateTime?
+  preparingAt        DateTime?
+  readyAt            DateTime?
+  pickedUpAt         DateTime?
+  deliveredAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?              @db.VarChar(500)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  items              OrderItem[]
+  statusHistory      OrderStatusHistory[]
+  branch             Branch               @relation(fields: [branchId], references: [id])
+  courier            Courier?             @relation(fields: [courierId], references: [id])
+  createdBy          User?                @relation("CreatedBy", fields: [createdById], references: [id])
+  customer           Customer?            @relation(fields: [customerId], references: [id])
+
+  @@index([platform])
+  @@index([status])
+  @@index([customerId])
+  @@index([courierId])
+  @@index([branchId])
+  @@index([createdAt])
+  @@index([platformOrderId])
+  @@index([paymentStatus])
+  @@index([orderNumber])
+  @@index([createdById], map: "orders_createdById_fkey")
+  @@map("orders")
+}
+
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  productId   Int
+  productName String   @db.VarChar(200)
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  totalPrice  Decimal  @db.Decimal(10, 2)
+  cost        Decimal  @db.Decimal(10, 2)
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id          Int          @id @default(autoincrement())
+  orderId     Int
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  note        String?      @db.VarChar(500)
+  changedById Int?
+  createdAt   DateTime     @default(now())
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("order_status_history")
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @db.VarChar(100)
+  slug      String    @unique @db.VarChar(100)
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+
+  @@index([slug])
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+model Product {
+  id              Int          @id @default(autoincrement())
+  name            String       @db.VarChar(200)
+  slug            String       @unique @db.VarChar(200)
+  description     String?      @db.Text
+  categoryId      Int
+  basePrice       Decimal      @db.Decimal(10, 2)
+  platformPrices  Json?
+  cost            Decimal      @default(0.00) @db.Decimal(10, 2)
+  isActive        Boolean      @default(true)
+  isAvailable     Boolean      @default(true)
+  preparationTime Int          @default(10)
+  sortOrder       Int          @default(0)
+  imageUrl        String?      @db.VarChar(500)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  orderItems      OrderItem[]
+  category        Category     @relation(fields: [categoryId], references: [id])
+  recipe          RecipeItem[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isAvailable])
+  @@index([slug])
+  @@index([sortOrder])
+  @@map("products")
+}
+
+model Ingredient {
+  id             Int             @id @default(autoincrement())
+  name           String          @db.VarChar(100)
+  unit           String          @db.VarChar(20)
+  unitCost       Decimal         @db.Decimal(10, 4)
+  trackStock     Boolean         @default(true)
+  minStock       Decimal         @default(0.00) @db.Decimal(10, 2)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  recipes        RecipeItem[]
+  stockItems     StockItem[]
+  stockMovements StockMovement[]
+
+  @@index([name])
+  @@index([isActive])
+  @@index([trackStock])
+  @@map("ingredients")
+}
+
+model RecipeItem {
+  id           Int        @id @default(autoincrement())
+  productId    Int
+  ingredientId Int
+  quantity     Decimal    @db.Decimal(10, 4)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, ingredientId])
+  @@index([productId])
+  @@index([ingredientId])
+  @@map("recipe_items")
+}
+
+model StockItem {
+  id               Int        @id @default(autoincrement())
+  ingredientId     Int
+  branchId         Int
+  currentStock     Decimal    @db.Decimal(10, 2)
+  theoreticalStock Decimal    @db.Decimal(10, 2)
+  minStock         Decimal    @db.Decimal(10, 2)
+  maxStock         Decimal?   @db.Decimal(10, 2)
+  lastCountAt      DateTime?
+  lastCountValue   Decimal?   @db.Decimal(10, 2)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  branch           Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ingredient       Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([ingredientId, branchId])
+  @@index([branchId])
+  @@index([ingredientId])
+  @@map("stock_items")
+}
+
+model StockMovement {
+  id            Int               @id @default(autoincrement())
+  ingredientId  Int
+  branchId      Int
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(10, 2)
+  referenceType String?           @db.VarChar(50)
+  referenceId   Int?
+  stockBefore   Decimal           @db.Decimal(10, 2)
+  stockAfter    Decimal           @db.Decimal(10, 2)
+  unitCost      Decimal?          @db.Decimal(10, 4)
+  totalCost     Decimal?          @db.Decimal(10, 2)
+  note          String?           @db.VarChar(500)
+  createdById   Int?
+  createdAt     DateTime          @default(now())
+  ingredient    Ingredient        @relation(fields: [ingredientId], references: [id])
+
+  @@index([ingredientId])
+  @@index([branchId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+model Courier {
+  id                  Int                      @id @default(autoincrement())
+  userId              Int                      @unique
+  branchId            Int
+  status              CourierStatus            @default(OFFLINE)
+  currentLatitude     Decimal?                 @db.Decimal(10, 8)
+  currentLongitude    Decimal?                 @db.Decimal(11, 8)
+  lastLocationAt      DateTime?
+  vehicleType         String?                  @db.VarChar(50)
+  vehiclePlate        String?                  @db.VarChar(20)
+  totalDeliveries     Int                      @default(0)
+  averageDeliveryTime Int?
+  rating              Decimal?                 @db.Decimal(3, 2)
+  performanceScore    Int                      @default(100)
+  cashBalance         Decimal                  @default(0.00) @db.Decimal(10, 2)
+  isOnShift           Boolean                  @default(false)
+  shiftStartedAt      DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  cashTransactions    CourierCashTransaction[]
+  branch              Branch                   @relation(fields: [branchId], references: [id])
+  user                User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders              Order[]
+
+  @@index([branchId])
+  @@index([status])
+  @@index([isOnShift])
+  @@index([performanceScore])
+  @@map("couriers")
+}
+
+model CourierCashTransaction {
+  id            Int      @id @default(autoincrement())
+  courierId     Int
+  type          String   @db.VarChar(30)
+  amount        Decimal  @db.Decimal(10, 2)
+  balanceBefore Decimal  @db.Decimal(10, 2)
+  balanceAfter  Decimal  @db.Decimal(10, 2)
+  orderId       Int?
+  note          String?  @db.VarChar(500)
+  createdById   Int?
+  createdAt     DateTime @default(now())
+  courier       Courier  @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  @@index([courierId])
+  @@index([createdAt])
+  @@index([type])
+  @@map("courier_cash_transactions")
+}
+
+model Customer {
+  id                 Int            @id @default(autoincrement())
+  phone              String         @unique @db.VarChar(20)
+  name               String?        @db.VarChar(100)
+  email              String?        @db.VarChar(255)
+  defaultAddress     String?        @db.VarChar(500)
+  defaultLatitude    Decimal?       @db.Decimal(10, 8)
+  defaultLongitude   Decimal?       @db.Decimal(11, 8)
+  status             CustomerStatus @default(ACTIVE)
+  firstOrderPlatform Platform?
+  isDirectCustomer   Boolean        @default(false)
+  totalOrders        Int            @default(0)
+  totalSpent         Decimal        @default(0.00) @db.Decimal(10, 2)
+  averageOrderValue  Decimal?       @db.Decimal(10, 2)
+  firstOrderAt       DateTime?
+  lastOrderAt        DateTime?
+  daysSinceLastOrder Int?
+  loyaltyPoints      Int            @default(0)
+  usedPromoCodes     Json?
+  notes              String?        @db.Text
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  orders             Order[]
+
+  @@index([phone])
+  @@index([status])
+  @@index([lastOrderAt])
+  @@index([isDirectCustomer])
+  @@index([totalOrders])
+  @@map("customers")
+}
+
+model PlatformConfig {
+  id             Int       @id @default(autoincrement())
+  platform       Platform  @unique
+  apiKey         String?   @db.Text
+  apiSecret      String?   @db.Text
+  accessToken    String?   @db.Text
+  refreshToken   String?   @db.Text
+  tokenExpiresAt DateTime?
+  isActive       Boolean   @default(true)
+  autoAccept     Boolean   @default(false)
+  commissionRate Decimal   @db.Decimal(5, 2)
+  lastSyncAt     DateTime?
+  syncStatus     String?   @db.VarChar(50)
+  syncError      String?   @db.Text
+  webhookUrl     String?   @db.VarChar(500)
+  webhookSecret  String?   @db.VarChar(255)
+  settings       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([platform])
+  @@index([isActive])
+  @@map("platform_configs")
+}
+
+model PlatformSyncLog {
+  id           Int      @id @default(autoincrement())
+  platform     Platform
+  action       String   @db.VarChar(100)
+  status       String   @db.VarChar(30)
+  requestData  Json?
+  responseData Json?
+  errorMessage String?  @db.Text
+  duration     Int?
+  recordsCount Int?
+  createdAt    DateTime @default(now())
+
+  @@index([platform])
+  @@index([createdAt])
+  @@index([action])
+  @@index([status])
+  @@map("platform_sync_logs")
+}
+
+model Rule {
+  id              Int             @id @default(autoincrement())
+  name            String          @db.VarChar(200)
+  description     String?         @db.Text
+  condition       Json
+  actionType      RuleActionType
+  actionParams    Json?
+  status          RuleStatus      @default(DRAFT)
+  priority        Int             @default(0)
+  cooldownMinutes Int             @default(5)
+  lastTriggeredAt DateTime?
+  triggerCount    Int             @default(0)
+  createdById     Int?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  executions      RuleExecution[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([actionType])
+  @@map("rules")
+}
+
+model RuleExecution {
+  id             Int       @id @default(autoincrement())
+  ruleId         Int
+  triggered      Boolean
+  conditionValue Json?
+  actionTaken    String?   @db.VarChar(500)
+  result         String?   @db.VarChar(30)
+  errorMessage   String?   @db.Text
+  canRollback    Boolean   @default(false)
+  rolledBackAt   DateTime?
+  rollbackData   Json?
+  executionTime  Int?
+  createdAt      DateTime  @default(now())
+  rule           Rule      @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([createdAt])
+  @@index([triggered])
+  @@map("rule_executions")
+}
+
+model Notification {
+  id             Int                 @id @default(autoincrement())
+  type           NotificationType
+  channel        NotificationChannel
+  recipientId    Int?
+  recipientPhone String?             @db.VarChar(20)
+  recipientEmail String?             @db.VarChar(255)
+  title          String              @db.VarChar(200)
+  body           String              @db.Text
+  data           Json?
+  status         String              @default("pending") @db.VarChar(30)
+  priority       Int                 @default(0)
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  readAt         DateTime?
+  failedReason   String?             @db.Text
+  retryCount     Int                 @default(0)
+  externalId     String?             @db.VarChar(100)
+  createdAt      DateTime            @default(now())
+
+  @@index([type])
+  @@index([channel])
+  @@index([recipientId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([scheduledAt])
+  @@map("notifications")
+}
+
+model DailyReport {
+  id                  Int      @id @default(autoincrement())
+  branchId            Int
+  date                DateTime @db.Date
+  totalOrders         Int      @default(0)
+  platformOrders      Json
+  posOrders           Int      @default(0)
+  directOrders        Int      @default(0)
+  cancelledOrders     Int      @default(0)
+  refundedOrders      Int      @default(0)
+  grossRevenue        Decimal  @db.Decimal(12, 2)
+  netRevenue          Decimal  @db.Decimal(12, 2)
+  platformCommissions Decimal  @db.Decimal(10, 2)
+  totalDiscount       Decimal  @default(0.00) @db.Decimal(10, 2)
+  totalDeliveryFees   Decimal  @default(0.00) @db.Decimal(10, 2)
+  averageOrderValue   Decimal? @db.Decimal(10, 2)
+  averageDeliveryTime Int?
+  onTimeDeliveryRate  Decimal? @db.Decimal(5, 2)
+  wasteAmount         Decimal? @db.Decimal(10, 2)
+  wasteRate           Decimal? @db.Decimal(5, 2)
+  newCustomers        Int      @default(0)
+  returningCustomers  Int      @default(0)
+  topProducts         Json?
+  hourlyBreakdown     Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  branch              Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, date])
+  @@index([date])
+  @@index([branchId])
+  @@map("daily_reports")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String   @db.VarChar(100)
+  entity    String   @db.VarChar(100)
+  entityId  Int?
+  oldData   Json?
+  newData   Json?
+  changes   Json?
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.VarChar(500)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity])
+  @@index([entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique @db.VarChar(100)
+  value       Json
+  type        String   @default("string") @db.VarChar(30)
+  description String?  @db.VarChar(500)
+  category    String?  @db.VarChar(50)
+  isPublic    Boolean  @default(false)
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+  @@index([category])
+  @@map("settings")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATION_MANAGER
+  BRANCH_MANAGER
+  CASHIER
+  KITCHEN
+  COURIER
+  ACCOUNTING
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum Platform {
+  GETIR
+  YEMEKSEPETI
+  TRENDYOL
+  MIGROS
+  DIRECT
+  POS
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  ON_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  ONLINE
+  MEAL_CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+enum CourierStatus {
+  AVAILABLE
+  ON_DELIVERY
+  RETURNING
+  OFFLINE
+  ON_BREAK
+}
+
+enum StockMovementType {
+  SALE
+  PURCHASE
+  WASTE
+  ADJUSTMENT
+  TRANSFER
+  COUNT
+}
+
+enum CustomerStatus {
+  ACTIVE
+  SLEEPING
+  LOST
+  VIP
+}
+
+enum NotificationType {
+  NEW_ORDER
+  ORDER_UPDATE
+  CRITICAL_STOCK
+  COURIER_ASSIGNED
+  DELIVERY_COMPLETE
+  WIN_BACK
+  SYSTEM_ALERT
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  WHATSAPP
+  IN_APP
+  EMAIL
+}
+
+enum RuleStatus {
+  ACTIVE
+  INACTIVE
+  DRAFT
+}
+
+enum RuleActionType {
+  CLOSE_PLATFORM
+  OPEN_PLATFORM
+  DISABLE_PRODUCT
+  ENABLE_PRODUCT
+  ADJUST_PRICE
+  SEND_NOTIFICATION
+  HOLD_ORDERS
+  ASSIGN_COURIER
+}

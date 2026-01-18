@@ -1,0 +1,30 @@
+{
+  "name": "kokpit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "312 Döner - Akıllı Restoran ve Lojistik Yönetim Sistemi",
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "dev:api": "pnpm --filter @kokpit/api dev",
+    "dev:web": "pnpm --filter @kokpit/web dev",
+    "build": "pnpm --parallel -r build",
+    "build:api": "pnpm --filter @kokpit/api build",
+    "build:web": "pnpm --filter @kokpit/web build",
+    "start:api": "pnpm --filter @kokpit/api start:prod",
+    "start:web": "pnpm --filter @kokpit/web start",
+    "db:generate": "pnpm --filter @kokpit/api prisma generate",
+    "db:push": "pnpm --filter @kokpit/api prisma db push",
+    "db:migrate": "pnpm --filter @kokpit/api prisma migrate deploy",
+    "db:seed": "pnpm --filter @kokpit/api prisma db seed",
+    "db:studio": "pnpm --filter @kokpit/api prisma studio",
+    "lint": "pnpm --parallel -r lint",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.35.0"
+  }
+}
