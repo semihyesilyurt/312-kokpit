@@ -17,8 +17,14 @@ import { OrderService } from './order.service';
 import { OrderGateway } from './order.gateway';
 import { OrderProcessor } from './order.processor';
 
+// Forward ref import to avoid circular dependency
+const PlatformModuleRef = forwardRef(() => import('../platform/platform.module').then(m => m.PlatformModule));
+
 @Module({
   imports: [
+    // Platform module for updating order status on platforms
+    PlatformModuleRef,
+
     // Register BullMQ queue for order processing
     BullModule.registerQueue({
       name: 'orders',

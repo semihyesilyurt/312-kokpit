@@ -73,6 +73,7 @@ model Order {
   orderNumber        String               @unique @db.VarChar(30)
   platform           Platform
   platformOrderId    String?              @db.VarChar(100)
+  platformDisplayId  String?              @db.VarChar(50) // Platform's visible order number (e.g., Trendyol orderCode)
   status             OrderStatus          @default(PENDING)
   customerId         Int?
   customerName       String               @db.VarChar(100)
@@ -121,6 +122,7 @@ model Order {
   @@index([paymentStatus])
   @@index([orderNumber])
   @@index([createdById], map: "orders_createdById_fkey")
+  @@index([status, createdAt]) // Composite index for kanban view (status filter + sort by date)
   @@map("orders")
 }
 

@@ -6,13 +6,17 @@ import { Clock, ChefHat, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-re
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api';
-import { formatRelativeTime } from '@/lib/utils';
 import type { Order, OrderStatus } from '@/types';
 import { useRequireAuth } from '@/hooks/useAuth';
 import { useSocket } from '@/hooks/useSocket';
 
-// Status configuration for kitchen display
+// Status configuration for kitchen display (lowercase for frontend)
 const KITCHEN_STATUSES: OrderStatus[] = ['confirmed', 'preparing', 'ready'];
+
+// Backend uses uppercase, map to lowercase for comparison
+const normalizeStatus = (status: string): OrderStatus => {
+  return status.toLowerCase() as OrderStatus;
+};
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: React.ReactNode }> = {
   confirmed: { label: 'Onaylandi', color: 'text-blue-500', bgColor: 'bg-blue-500/10', icon: <Clock className="h-5 w-5" /> },
@@ -20,77 +24,92 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: str
   ready: { label: 'Hazir', color: 'text-green-500', bgColor: 'bg-green-500/10', icon: <CheckCircle className="h-5 w-5" /> },
 };
 
-// Mock data
-const mockKitchenOrders: Order[] = [
-  {
-    id: '1',
-    orderNumber: '128',
-    platform: 'yemeksepeti',
-    status: 'confirmed',
-    customer: { name: 'Ahmet Y.', phone: '5321234567', address: 'Kizilay' },
-    items: [
-      { id: '1', productId: 'p1', productName: 'Doner Durum', quantity: 2, unitPrice: 35, totalPrice: 70 },
-      { id: '2', productId: 'p2', productName: 'Ayran', quantity: 2, unitPrice: 10, totalPrice: 20 },
-    ],
-    subtotal: 90,
-    deliveryFee: 15,
-    discount: 0,
-    total: 105,
-    paymentMethod: 'online',
-    isPaid: true,
-    createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    orderNumber: '127',
-    platform: 'getir',
-    status: 'preparing',
-    customer: { name: 'Mehmet D.', phone: '5329876543', address: 'Cankaya' },
-    items: [
-      { id: '3', productId: 'p3', productName: 'Iskender Porsiyon', quantity: 1, unitPrice: 120, totalPrice: 120 },
-      { id: '4', productId: 'p4', productName: 'Mercimek Corbasi', quantity: 1, unitPrice: 25, totalPrice: 25 },
-    ],
-    subtotal: 145,
-    deliveryFee: 20,
-    discount: 0,
-    total: 165,
-    paymentMethod: 'cash',
-    isPaid: false,
-    createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    orderNumber: '126',
-    platform: 'phone',
-    status: 'ready',
-    customer: { name: 'Ayse K.', phone: '5335551234', address: 'Bahcelievler' },
-    items: [
-      { id: '5', productId: 'p5', productName: 'Lahmacun', quantity: 4, unitPrice: 25, totalPrice: 100 },
-    ],
-    subtotal: 100,
-    deliveryFee: 15,
-    discount: 0,
-    total: 115,
-    paymentMethod: 'credit_card',
-    isPaid: true,
-    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+// Transform backend order to frontend format
+interface BackendOrder {
+  id: number;
+  orderNumber: string;
+  platform: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerNote?: string;
+  items: Array<{
+    id: number;
+    productId: number;
+    productName: string;
+    quantity: number;
+    unitPrice: { toNumber?: () => number } | number;
+    totalPrice: { toNumber?: () => number } | number;
+    notes?: string;
+  }>;
+  subtotal: { toNumber?: () => number } | number;
+  deliveryFee: { toNumber?: () => number } | number;
+  discount: { toNumber?: () => number } | number;
+  totalAmount: { toNumber?: () => number } | number;
+  paymentMethod: string;
+  paymentStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const transformOrder = (order: BackendOrder): Order => {
+  const toNumber = (val: { toNumber?: () => number } | number | undefined): number => {
+    if (val === undefined || val === null) return 0;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'object' && 'toNumber' in val && typeof val.toNumber === 'function') {
+      return val.toNumber();
+    }
+    return Number(val) || 0;
+  };
+
+  return {
+    id: String(order.id),
+    orderNumber: order.orderNumber,
+    platform: order.platform.toLowerCase() as Order['platform'],
+    status: normalizeStatus(order.status),
+    customer: {
+      name: order.customerName,
+      phone: order.customerPhone,
+      address: order.customerAddress,
+      notes: order.customerNote,
+    },
+    items: order.items.map((item) => ({
+      id: String(item.id),
+      productId: String(item.productId),
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: toNumber(item.unitPrice),
+      totalPrice: toNumber(item.totalPrice),
+      notes: item.notes,
+    })),
+    subtotal: toNumber(order.subtotal),
+    deliveryFee: toNumber(order.deliveryFee),
+    discount: toNumber(order.discount),
+    total: toNumber(order.totalAmount),
+    paymentMethod: order.paymentMethod.toLowerCase() as Order['paymentMethod'],
+    isPaid: order.paymentStatus === 'PAID',
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  };
+};
 
 // Kitchen Order Card
 function KitchenOrderCard({
   order,
   onStatusChange,
+  isUpdating,
+  updatingOrderId,
 }: {
   order: Order;
   onStatusChange: (orderId: string, status: OrderStatus) => void;
+  isUpdating: boolean;
+  updatingOrderId: string | null;
 }) {
   const config = STATUS_CONFIG[order.status];
   const waitTime = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000);
   const isUrgent = waitTime > 15;
+  const isThisOrderUpdating = isUpdating && updatingOrderId === order.id;
 
   return (
     <Card className={`${isUrgent ? 'ring-2 ring-destructive' : ''} transition-all`}>
@@ -103,7 +122,7 @@ function KitchenOrderCard({
             </span>
             <div>
               <span className="font-bold text-lg">#{order.orderNumber}</span>
-              <p className="text-xs text-muted-foreground">{order.platform}</p>
+              <p className="text-xs text-muted-foreground capitalize">{order.platform}</p>
             </div>
           </div>
           <div className={`flex items-center gap-1 ${isUrgent ? 'text-destructive' : 'text-muted-foreground'}`}>
@@ -145,9 +164,14 @@ function KitchenOrderCard({
             <Button
               className="flex-1"
               onClick={() => onStatusChange(order.id, 'preparing')}
+              disabled={isThisOrderUpdating}
             >
-              <ChefHat className="h-4 w-4 mr-2" />
-              Hazirlamaya Basla
+              {isThisOrderUpdating ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <ChefHat className="h-4 w-4 mr-2" />
+              )}
+              {isThisOrderUpdating ? 'Guncelleniyor...' : 'Hazirlamaya Basla'}
             </Button>
           )}
           {order.status === 'preparing' && (
@@ -155,9 +179,14 @@ function KitchenOrderCard({
               className="flex-1"
               variant="success"
               onClick={() => onStatusChange(order.id, 'ready')}
+              disabled={isThisOrderUpdating}
             >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Hazir
+              {isThisOrderUpdating ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle className="h-4 w-4 mr-2" />
+              )}
+              {isThisOrderUpdating ? 'Guncelleniyor...' : 'Hazir'}
             </Button>
           )}
           {order.status === 'ready' && (
@@ -177,33 +206,46 @@ export default function KitchenPage() {
   const queryClient = useQueryClient();
   const { onNewOrder, onOrderUpdated, isConnected } = useSocket();
 
-  // Fetch orders
-  const { data: ordersData, isLoading, refetch } = useQuery({
+  // Track which order is being updated
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  // Fetch orders from API
+  const { data: orders = [], isLoading, refetch, error } = useQuery<Order[]>({
     queryKey: ['kitchen-orders'],
     queryFn: async () => {
-      try {
-        const response = await api.get('/orders', {
-          params: { statuses: KITCHEN_STATUSES.join(',') },
-        });
-        return response.data;
-      } catch {
-        return { orders: mockKitchenOrders };
-      }
+      const response = await api.get('/orders', {
+        params: {
+          statuses: KITCHEN_STATUSES.join(','),
+          limit: 100,
+          sortBy: 'createdAt',
+          sortOrder: 'asc',
+        },
+      });
+      // API returns { data: items, meta: ... } after interceptor unwrap
+      const items = response.data || [];
+      return items.map((order: BackendOrder) => transformOrder(order));
     },
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 30000,
   });
 
   // Update status mutation
   const updateStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: OrderStatus }) => {
-      return api.patch(`/orders/${orderId}/status`, { status });
+      // Backend expects uppercase status
+      const backendStatus = status.toUpperCase();
+      return api.patch(`/orders/${orderId}/status`, { status: backendStatus });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+      setUpdatingOrderId(null);
+    },
+    onError: () => {
+      setUpdatingOrderId(null);
     },
   });
 
   const handleStatusChange = useCallback((orderId: string, status: OrderStatus) => {
+    setUpdatingOrderId(orderId);
     updateStatusMutation.mutate({ orderId, status });
   }, [updateStatusMutation]);
 
@@ -216,8 +258,6 @@ export default function KitchenPage() {
       unsubUpdated();
     };
   }, [onNewOrder, onOrderUpdated, refetch]);
-
-  const orders = ordersData?.orders || mockKitchenOrders;
 
   // Group by status
   const ordersByStatus = KITCHEN_STATUSES.reduce((acc, status) => {
@@ -249,7 +289,49 @@ export default function KitchenPage() {
         </div>
       </div>
 
+      {/* Error State */}
+      {error && (
+        <div className="p-4">
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 text-center">
+            <AlertTriangle className="h-8 w-8 text-destructive mx-auto mb-2" />
+            <p className="text-destructive font-medium">Siparisler yuklenemedi</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {error instanceof Error ? error.message : 'Bir hata olustu'}
+            </p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Tekrar Dene
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && !error && (
+        <div className="p-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {KITCHEN_STATUSES.map((status) => (
+              <div key={status} className="space-y-4">
+                <div className={`p-3 rounded-lg ${STATUS_CONFIG[status].bgColor}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={STATUS_CONFIG[status].color}>{STATUS_CONFIG[status].icon}</span>
+                      <h2 className={`font-bold ${STATUS_CONFIG[status].color}`}>{STATUS_CONFIG[status].label}</h2>
+                    </div>
+                  </div>
+                </div>
+                <div className="animate-pulse space-y-3">
+                  <div className="h-32 bg-muted rounded-lg" />
+                  <div className="h-32 bg-muted rounded-lg" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Kitchen Board */}
+      {!isLoading && !error && (
       <div className="p-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {KITCHEN_STATUSES.map((status) => {
@@ -278,6 +360,8 @@ export default function KitchenPage() {
                       key={order.id}
                       order={order}
                       onStatusChange={handleStatusChange}
+                      isUpdating={updateStatusMutation.isPending}
+                      updatingOrderId={updatingOrderId}
                     />
                   ))}
                   {statusOrders.length === 0 && (
@@ -291,6 +375,7 @@ export default function KitchenPage() {
           })}
         </div>
       </div>
+      )}
     </div>
   );
 }

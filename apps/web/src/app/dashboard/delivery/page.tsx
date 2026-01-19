@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Wallet,
   Star,
-  Clock,
   Package,
   Navigation,
 } from 'lucide-react';
@@ -60,142 +59,8 @@ const VEHICLE_LABELS: Record<string, string> = {
 // Ankara center coordinates (312 Doner is in Ankara)
 const ANKARA_CENTER: [number, number] = [39.9334, 32.8597];
 
-// Mock couriers with locations
-const mockCouriers: (Courier & { currentLocation?: { lat: number; lng: number; updatedAt: string } })[] = [
-  {
-    id: 'c1',
-    name: 'Ali Kurye',
-    phone: '5321111111',
-    status: 'busy',
-    vehicleType: 'motorcycle',
-    currentLocation: {
-      lat: 39.9234,
-      lng: 32.8497,
-      updatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    },
-    activeDeliveries: 2,
-    todayDeliveries: 15,
-    cashBalance: 450,
-    rating: 4.8,
-  },
-  {
-    id: 'c2',
-    name: 'Veli Kurye',
-    phone: '5322222222',
-    status: 'available',
-    vehicleType: 'motorcycle',
-    currentLocation: {
-      lat: 39.9434,
-      lng: 32.8697,
-      updatedAt: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
-    },
-    activeDeliveries: 0,
-    todayDeliveries: 12,
-    cashBalance: 320,
-    rating: 4.6,
-  },
-  {
-    id: 'c3',
-    name: 'Hasan Kurye',
-    phone: '5323333333',
-    status: 'busy',
-    vehicleType: 'bicycle',
-    currentLocation: {
-      lat: 39.9134,
-      lng: 32.8397,
-      updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    },
-    activeDeliveries: 1,
-    todayDeliveries: 8,
-    cashBalance: 180,
-    rating: 4.5,
-  },
-  {
-    id: 'c4',
-    name: 'Mehmet Kurye',
-    phone: '5324444444',
-    status: 'break',
-    vehicleType: 'motorcycle',
-    currentLocation: {
-      lat: 39.9384,
-      lng: 32.8547,
-      updatedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    },
-    activeDeliveries: 0,
-    todayDeliveries: 10,
-    cashBalance: 280,
-    rating: 4.7,
-  },
-  {
-    id: 'c5',
-    name: 'Ayhan Kurye',
-    phone: '5325555555',
-    status: 'offline',
-    vehicleType: 'car',
-    activeDeliveries: 0,
-    todayDeliveries: 0,
-    cashBalance: 0,
-    rating: 4.4,
-  },
-];
-
-// Mock active deliveries
-const mockActiveDeliveries: Order[] = [
-  {
-    id: 'o1',
-    orderNumber: '126',
-    platform: 'getir',
-    status: 'delivering',
-    customer: { name: 'Mehmet Demir', phone: '5329876543', address: 'Cankaya Mah. Sok:8/A' },
-    items: [{ id: '1', productId: 'p1', productName: 'Iskender', quantity: 1, unitPrice: 120, totalPrice: 120 }],
-    subtotal: 120,
-    deliveryFee: 25,
-    discount: 0,
-    total: 145,
-    paymentMethod: 'cash',
-    isPaid: false,
-    courierId: 'c1',
-    courierName: 'Ali Kurye',
-    createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'o2',
-    orderNumber: '124',
-    platform: 'trendyol',
-    status: 'delivering',
-    customer: { name: 'Fatma Ozturk', phone: '5341112233', address: 'Ulus Mah. Apt:5' },
-    items: [{ id: '2', productId: 'p2', productName: 'Adana Kebap', quantity: 2, unitPrice: 85, totalPrice: 170 }],
-    subtotal: 170,
-    deliveryFee: 30,
-    discount: 10,
-    total: 190,
-    paymentMethod: 'online',
-    isPaid: true,
-    courierId: 'c1',
-    courierName: 'Ali Kurye',
-    createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'o3',
-    orderNumber: '125',
-    platform: 'yemeksepeti',
-    status: 'delivering',
-    customer: { name: 'Can Yilmaz', phone: '5357778899', address: 'Kizilay Cad. No:22' },
-    items: [{ id: '3', productId: 'p3', productName: 'Doner Durum', quantity: 3, unitPrice: 35, totalPrice: 105 }],
-    subtotal: 105,
-    deliveryFee: 20,
-    discount: 0,
-    total: 125,
-    paymentMethod: 'credit_card',
-    isPaid: true,
-    courierId: 'c3',
-    courierName: 'Hasan Kurye',
-    createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+// Extended Courier type with location
+type CourierWithLocation = Courier & { currentLocation?: { lat: number; lng: number; updatedAt: string } };
 
 // Courier card component
 function CourierCard({
@@ -204,12 +69,12 @@ function CourierCard({
   isSelected,
   onSelect,
 }: {
-  courier: Courier & { currentLocation?: { lat: number; lng: number; updatedAt: string } };
+  courier: CourierWithLocation;
   deliveries: Order[];
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const config = STATUS_CONFIG[courier.status];
+  const config = STATUS_CONFIG[courier.status] || STATUS_CONFIG.offline;
 
   return (
     <Card
@@ -223,7 +88,7 @@ function CourierCard({
             <div className="relative">
               <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-lg font-bold text-primary">
-                  {courier.name.charAt(0)}
+                  {courier.name?.charAt(0) || '?'}
                 </span>
               </div>
               <span
@@ -239,10 +104,10 @@ function CourierCard({
               />
             </div>
             <div>
-              <h3 className="font-medium">{courier.name}</h3>
+              <h3 className="font-medium">{courier.name || 'Bilinmeyen Kurye'}</h3>
               <div className="flex items-center gap-1 text-sm text-muted-foreground">
                 <Phone className="h-3 w-3" />
-                <span>{courier.phone}</span>
+                <span>{courier.phone || '-'}</span>
               </div>
             </div>
           </div>
@@ -258,21 +123,21 @@ function CourierCard({
               <Package className="h-3 w-3 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Aktif</span>
             </div>
-            <p className="font-bold">{courier.activeDeliveries}</p>
+            <p className="font-bold">{courier.activeDeliveries ?? 0}</p>
           </div>
           <div className="text-center p-2 bg-muted/50 rounded-lg">
             <div className="flex items-center justify-center gap-1">
               <Truck className="h-3 w-3 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Bugun</span>
             </div>
-            <p className="font-bold">{courier.todayDeliveries}</p>
+            <p className="font-bold">{courier.todayDeliveries ?? 0}</p>
           </div>
           <div className="text-center p-2 bg-muted/50 rounded-lg">
             <div className="flex items-center justify-center gap-1">
               <Star className="h-3 w-3 text-warning" />
               <span className="text-xs text-muted-foreground">Puan</span>
             </div>
-            <p className="font-bold">{courier.rating}</p>
+            <p className="font-bold">{courier.rating ?? '-'}</p>
           </div>
         </div>
 
@@ -282,13 +147,13 @@ function CourierCard({
             <Wallet className="h-4 w-4 text-warning" />
             <span className="text-sm">Nakit Bakiye</span>
           </div>
-          <span className="font-bold">{formatCurrency(courier.cashBalance)}</span>
+          <span className="font-bold">{formatCurrency(courier.cashBalance ?? 0)}</span>
         </div>
 
         {/* Vehicle */}
         <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
           <Navigation className="h-3 w-3" />
-          <span>{VEHICLE_LABELS[courier.vehicleType]}</span>
+          <span>{VEHICLE_LABELS[courier.vehicleType] || courier.vehicleType || '-'}</span>
           {courier.currentLocation && (
             <span className="ml-auto text-xs">
               Son konum: {Math.round((Date.now() - new Date(courier.currentLocation.updatedAt).getTime()) / 60000)} dk once
@@ -319,13 +184,25 @@ function CourierCard({
   );
 }
 
+// Fix Leaflet default icon issue with Next.js/webpack
+const fixLeafletIcon = async () => {
+  const L = (await import('leaflet')).default;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  delete (L.Icon.Default.prototype as any)._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  });
+};
+
 // Map component
 function DeliveryMap({
   couriers,
-  selectedCourierId,
+  selectedCourierId: _selectedCourierId,
   onSelectCourier,
 }: {
-  couriers: (Courier & { currentLocation?: { lat: number; lng: number; updatedAt: string } })[];
+  couriers: CourierWithLocation[];
   selectedCourierId: string | null;
   onSelectCourier: (id: string | null) => void;
 }) {
@@ -333,6 +210,7 @@ function DeliveryMap({
 
   useEffect(() => {
     setIsClient(true);
+    fixLeafletIcon();
   }, []);
 
   if (!isClient) {
@@ -401,28 +279,83 @@ export default function DeliveryPage() {
   const [statusFilter, setStatusFilter] = useState<CourierStatus | 'all'>('all');
 
   // Fetch couriers
-  const { data: couriersData, isLoading, refetch } = useQuery({
+  const { data: couriersData, isLoading, refetch } = useQuery<CourierWithLocation[]>({
     queryKey: ['couriers'],
     queryFn: async () => {
       try {
-        const response = await api.get<typeof mockCouriers>('/delivery/couriers');
-        return response.data;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get('/delivery/couriers');
+        const couriersArray = response.data || [];
+        if (!Array.isArray(couriersArray)) return [];
+
+        // Map API response to frontend format
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return couriersArray.map((c: any) => ({
+          id: String(c.id || ''),
+          name: c.user?.name || c.name || 'Kurye',
+          phone: c.user?.phone || c.phone || '',
+          status: (c.status || 'offline').toLowerCase() as CourierStatus,
+          vehicleType: (c.vehicleType || 'motorcycle').toLowerCase() as 'motorcycle' | 'bicycle' | 'car' | 'walk',
+          currentLocation: c.lastLatitude && c.lastLongitude ? {
+            lat: parseFloat(c.lastLatitude) || 0,
+            lng: parseFloat(c.lastLongitude) || 0,
+            updatedAt: c.lastLocationUpdate || new Date().toISOString(),
+          } : undefined,
+          activeDeliveries: c._count?.orders || 0,
+          todayDeliveries: c.totalDeliveries || 0,
+          cashBalance: parseFloat(c.cashBalance) || 0,
+          rating: c.rating ? parseFloat(c.rating) : 0,
+        }));
       } catch {
-        return mockCouriers;
+        return [];
       }
     },
     refetchInterval: 30000,
   });
 
   // Fetch active deliveries
-  const { data: deliveriesData } = useQuery({
+  const { data: deliveriesData } = useQuery<Order[]>({
     queryKey: ['active-deliveries'],
     queryFn: async () => {
       try {
-        const response = await api.get<Order[]>('/orders', { params: { status: 'delivering' } });
-        return response.data;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get('/orders', { params: { status: 'ON_DELIVERY' } });
+        const ordersArray = response.data || [];
+        if (!Array.isArray(ordersArray)) return [];
+
+        // Map API response to frontend Order format
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return ordersArray.map((item: any) => ({
+          id: String(item.id || ''),
+          orderNumber: item.orderNumber || '',
+          platform: item.platform?.toLowerCase() || 'phone',
+          status: 'delivering',
+          customer: {
+            name: item.customerName || '',
+            phone: item.customerPhone || '',
+            address: item.customerAddress || '',
+          },
+          items: Array.isArray(item.items) ? item.items.map((orderItem: { id: number; productName: string; quantity: number; unitPrice: string; totalPrice: string }) => ({
+            id: String(orderItem.id || ''),
+            productId: String(orderItem.id || ''),
+            productName: orderItem.productName || '',
+            quantity: orderItem.quantity || 0,
+            unitPrice: parseFloat(orderItem.unitPrice) || 0,
+            totalPrice: parseFloat(orderItem.totalPrice) || 0,
+          })) : [],
+          subtotal: parseFloat(item.subtotal) || 0,
+          deliveryFee: parseFloat(item.deliveryFee) || 0,
+          discount: parseFloat(item.discount) || 0,
+          total: parseFloat(item.totalAmount) || 0,
+          paymentMethod: (item.paymentMethod?.toLowerCase() || 'cash') as 'cash' | 'credit_card' | 'debit_card' | 'online',
+          isPaid: item.paymentStatus === 'PAID',
+          courierId: item.courierId ? String(item.courierId) : undefined,
+          courierName: item.courier?.user?.name,
+          createdAt: item.createdAt || new Date().toISOString(),
+          updatedAt: item.updatedAt || new Date().toISOString(),
+        }));
       } catch {
-        return mockActiveDeliveries;
+        return [];
       }
     },
     refetchInterval: 30000,
@@ -439,8 +372,8 @@ export default function DeliveryPage() {
     };
   }, [onCourierLocation, onCourierStatus, refetch]);
 
-  const couriers = couriersData || mockCouriers;
-  const deliveries = deliveriesData || mockActiveDeliveries;
+  const couriers = couriersData || [];
+  const deliveries = deliveriesData || [];
 
   // Filter couriers
   const filteredCouriers = useMemo(() => {
@@ -458,8 +391,8 @@ export default function DeliveryPage() {
     const total = couriers.length;
     const available = couriers.filter((c) => c.status === 'available').length;
     const busy = couriers.filter((c) => c.status === 'busy').length;
-    const totalCashBalance = couriers.reduce((sum, c) => sum + c.cashBalance, 0);
-    const totalActiveDeliveries = couriers.reduce((sum, c) => sum + c.activeDeliveries, 0);
+    const totalCashBalance = couriers.reduce((sum, c) => sum + (c.cashBalance || 0), 0);
+    const totalActiveDeliveries = couriers.reduce((sum, c) => sum + (c.activeDeliveries || 0), 0);
 
     return { total, available, busy, totalCashBalance, totalActiveDeliveries };
   }, [couriers]);

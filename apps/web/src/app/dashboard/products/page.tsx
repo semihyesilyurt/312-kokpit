@@ -23,89 +23,29 @@ import { api } from '@/services/api';
 import { formatCurrency } from '@/lib/utils';
 import { useRequireAuth } from '@/hooks/useAuth';
 
-// Mock categories
-const mockCategories = [
-  { id: '1', name: 'Donerler', slug: 'donerler', productCount: 8 },
-  { id: '2', name: 'Iskenderler', slug: 'iskenderler', productCount: 4 },
-  { id: '3', name: 'Pideler', slug: 'pideler', productCount: 6 },
-  { id: '4', name: 'Lahmacunlar', slug: 'lahmacunlar', productCount: 3 },
-  { id: '5', name: 'Icecekler', slug: 'icecekler', productCount: 12 },
-  { id: '6', name: 'Tatlilar', slug: 'tatlilar', productCount: 5 },
-];
+// Product interface
+interface Product {
+  id: string;
+  name: string;
+  slug: string;
+  categoryId: string;
+  category: string;
+  basePrice: number;
+  cost: number;
+  isActive: boolean;
+  isAvailable: boolean;
+  preparationTime: number;
+  description: string;
+  imageUrl: string | null;
+}
 
-// Mock products
-const mockProducts = [
-  {
-    id: '1',
-    name: 'Doner Durum',
-    slug: 'doner-durum',
-    categoryId: '1',
-    category: 'Donerler',
-    basePrice: 45,
-    cost: 18,
-    isActive: true,
-    isAvailable: true,
-    preparationTime: 8,
-    description: 'Klasik dana doner durum',
-    imageUrl: null,
-  },
-  {
-    id: '2',
-    name: 'Tavuk Doner',
-    slug: 'tavuk-doner',
-    categoryId: '1',
-    category: 'Donerler',
-    basePrice: 40,
-    cost: 15,
-    isActive: true,
-    isAvailable: true,
-    preparationTime: 8,
-    description: 'Tavuk doner porsiyon',
-    imageUrl: null,
-  },
-  {
-    id: '3',
-    name: 'Iskender',
-    slug: 'iskender',
-    categoryId: '2',
-    category: 'Iskenderler',
-    basePrice: 120,
-    cost: 45,
-    isActive: true,
-    isAvailable: true,
-    preparationTime: 12,
-    description: 'Ozel sos ve tereyagi ile',
-    imageUrl: null,
-  },
-  {
-    id: '4',
-    name: 'Lahmacun',
-    slug: 'lahmacun',
-    categoryId: '4',
-    category: 'Lahmacunlar',
-    basePrice: 25,
-    cost: 8,
-    isActive: true,
-    isAvailable: false,
-    preparationTime: 10,
-    description: 'Ince hamur lahmacun',
-    imageUrl: null,
-  },
-  {
-    id: '5',
-    name: 'Ayran',
-    slug: 'ayran',
-    categoryId: '5',
-    category: 'Icecekler',
-    basePrice: 12,
-    cost: 4,
-    isActive: true,
-    isAvailable: true,
-    preparationTime: 0,
-    description: '300ml ayran',
-    imageUrl: null,
-  },
-];
+// Category interface
+interface Category {
+  id: string;
+  name: string;
+  slug: string;
+  productCount: number;
+}
 
 // Product Card
 function ProductCard({
@@ -113,8 +53,8 @@ function ProductCard({
   onEdit,
   onToggleAvailability,
 }: {
-  product: typeof mockProducts[0];
-  onEdit: (product: typeof mockProducts[0]) => void;
+  product: Product;
+  onEdit: (product: Product) => void;
   onToggleAvailability: (productId: string, isAvailable: boolean) => void;
 }) {
   const profit = product.basePrice - product.cost;
@@ -197,10 +137,10 @@ function ProductFormModal({
   onClose,
   onSave,
 }: {
-  product: typeof mockProducts[0] | null;
-  categories: typeof mockCategories;
+  product: Product | null;
+  categories: Category[];
   onClose: () => void;
-  onSave: (data: Partial<typeof mockProducts[0]>) => void;
+  onSave: (data: Partial<Product>) => void;
 }) {
   const [formData, setFormData] = useState({
     name: product?.name || '',
@@ -317,18 +257,46 @@ export default function ProductsPage() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all');
-  const [editingProduct, setEditingProduct] = useState<typeof mockProducts[0] | null>(null);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [showForm, setShowForm] = useState(false);
 
   // Fetch products
-  const { data: productsData, isLoading, refetch } = useQuery({
+  const { data: productsData, isLoading, refetch } = useQuery<{ products: Product[]; categories: Category[] }>({
     queryKey: ['products', selectedCategory, searchQuery],
     queryFn: async () => {
       try {
-        const response = await api.get('/products');
-        return response.data;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get('/products');
+        const data = response.data || {};
+
+        // Map API response to frontend format
+        const productsArr = data.products || data || [];
+        const products: Product[] = Array.isArray(productsArr) ? productsArr.map((p: Record<string, unknown>) => ({
+          id: String(p.id || ''),
+          name: String(p.name || ''),
+          slug: String(p.slug || ''),
+          categoryId: String(p.categoryId || ''),
+          category: String((p.category as { name?: string })?.name || ''),
+          basePrice: parseFloat(String(p.basePrice || p.price || 0)),
+          cost: parseFloat(String(p.cost || 0)),
+          isActive: Boolean(p.isActive),
+          isAvailable: Boolean(p.isAvailable !== false),
+          preparationTime: parseInt(String(p.preparationTime || 10)),
+          description: String(p.description || ''),
+          imageUrl: p.imageUrl ? String(p.imageUrl) : null,
+        })) : [];
+
+        const categoriesArr = data.categories || [];
+        const categories: Category[] = Array.isArray(categoriesArr) ? categoriesArr.map((c: Record<string, unknown>) => ({
+          id: String(c.id || ''),
+          name: String(c.name || ''),
+          slug: String(c.slug || ''),
+          productCount: parseInt(String((c._count as { products?: number })?.products || c.productCount || 0)),
+        })) : [];
+
+        return { products, categories };
       } catch {
-        return { products: mockProducts, categories: mockCategories };
+        return { products: [], categories: [] };
       }
     },
   });
@@ -343,11 +311,11 @@ export default function ProductsPage() {
     },
   });
 
-  const products = productsData?.products || mockProducts;
-  const categories = productsData?.categories || mockCategories;
+  const products = productsData?.products || [];
+  const categories = productsData?.categories || [];
 
   // Filter products
-  const filteredProducts = products.filter((product: typeof mockProducts[0]) => {
+  const filteredProducts = products.filter((product: Product) => {
     if (selectedCategory !== 'all' && product.categoryId !== selectedCategory) return false;
     if (searchQuery) {
       return product.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -359,8 +327,7 @@ export default function ProductsPage() {
     toggleMutation.mutate({ productId, isAvailable });
   };
 
-  const handleSaveProduct = (data: Partial<typeof mockProducts[0]>) => {
-    // In real app, call API
+  const handleSaveProduct = (data: Partial<Product>) => {
     console.log('Save product:', data);
     setShowForm(false);
     setEditingProduct(null);
@@ -408,7 +375,7 @@ export default function ProductsPage() {
         >
           Tumu ({products.length})
         </Button>
-        {categories.map((category: typeof mockCategories[0]) => (
+        {categories.map((category: Category) => (
           <Button
             key={category.id}
             variant={selectedCategory === category.id ? 'default' : 'outline'}
@@ -422,7 +389,7 @@ export default function ProductsPage() {
 
       {/* Products Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {filteredProducts.map((product: typeof mockProducts[0]) => (
+        {filteredProducts.map((product: Product) => (
           <ProductCard
             key={product.id}
             product={product}

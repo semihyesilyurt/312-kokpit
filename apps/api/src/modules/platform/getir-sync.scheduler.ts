@@ -209,6 +209,8 @@ export class GetirSyncScheduler implements OnModuleInit {
   /**
    * Process a single order from Getir
    * Returns 'created', 'updated', or 'skipped'
+   * - New orders: Create in DB
+   * - Existing orders: Sync status from platform to DB (except DELIVERED/CANCELLED)
    */
   private async processOrder(platformOrder: PlatformOrder): Promise<'created' | 'updated' | 'skipped'> {
     // Check if already processed in this session
@@ -225,7 +227,77 @@ export class GetirSyncScheduler implements OnModuleInit {
     });
 
     if (existingOrder) {
-      // Order exists - mark as processed and skip
+      // Order exists - sync status from platform only for forward progress or final states
+      const finalStatuses = ['DELIVERED', 'CANCELLED'];
+
+      if (finalStatuses.includes(existingOrder.status)) {
+        this.processedOrderIds.add(platformOrder.platformOrderId);
+        return 'skipped';
+      }
+
+      // Check if platform status is different from DB status
+      const platformStatus = platformOrder.platformStatus;
+      if (platformStatus && platformStatus !== existingOrder.status) {
+        // Status priority order (higher index = more advanced in workflow)
+        const statusPriority: Record<string, number> = {
+          PENDING: 0,
+          CONFIRMED: 1,
+          PREPARING: 2,
+          READY: 3,
+          ON_DELIVERY: 4,
+          DELIVERED: 5,
+          CANCELLED: 5,
+        };
+
+        const dbPriority = statusPriority[existingOrder.status] ?? 0;
+        const platformPriority = statusPriority[platformStatus] ?? 0;
+
+        // Only sync from Getir if:
+        // 1. Platform status is more advanced (forward progress)
+        // 2. OR platform status is a final state (DELIVERED/CANCELLED)
+        const isFinalState = platformStatus === 'DELIVERED' || platformStatus === 'CANCELLED';
+        const isForwardProgress = platformPriority > dbPriority;
+
+        if (!isFinalState && !isForwardProgress) {
+          this.logger.debug(
+            `Skipping backward sync for ${existingOrder.orderNumber}: DB=${existingOrder.status}, Getir=${platformStatus}`,
+          );
+          this.processedOrderIds.add(platformOrder.platformOrderId);
+          return 'skipped';
+        }
+
+        // Update DB status to match platform status
+        await this.prisma.order.update({
+          where: { id: existingOrder.id },
+          data: { status: platformStatus },
+        });
+
+        // Create status history entry
+        await this.prisma.orderStatusHistory.create({
+          data: {
+            orderId: existingOrder.id,
+            fromStatus: existingOrder.status,
+            toStatus: platformStatus,
+            note: `Status synced from Getir (${isFinalState ? 'final state' : 'forward progress'})`,
+          },
+        });
+
+        // Emit status update via WebSocket for Kanban
+        this.orderGateway.emitOrderStatusChanged(
+          String(existingOrder.branchId),
+          existingOrder.id,
+          platformStatus,
+          existingOrder.status,
+        );
+
+        this.logger.log(
+          `Getir order ${existingOrder.orderNumber} status updated: ${existingOrder.status} → ${platformStatus}`,
+        );
+
+        this.processedOrderIds.add(platformOrder.platformOrderId);
+        return 'updated';
+      }
+
       this.processedOrderIds.add(platformOrder.platformOrderId);
       return 'skipped';
     }
@@ -236,6 +308,66 @@ export class GetirSyncScheduler implements OnModuleInit {
     // Mark as processed
     this.processedOrderIds.add(platformOrder.platformOrderId);
 
+    // Auto-accept order on Getir platform for all new orders
+    // Try to verify regardless of reported status (Getir API sometimes reports wrong status)
+    const shouldAutoAccept = ['PENDING', 'CONFIRMED'].includes(platformOrder.platformStatus || 'PENDING');
+
+    if (shouldAutoAccept) {
+      try {
+        this.logger.debug(`Attempting auto-accept for Getir order ${order.orderNumber} (status: ${platformOrder.platformStatus})`);
+        const verified = await this.getirAdapter.verifyOrder(platformOrder.platformOrderId);
+        if (verified) {
+          // Update order status to CONFIRMED
+          await this.prisma.order.update({
+            where: { id: order.id },
+            data: {
+              status: 'CONFIRMED',
+              confirmedAt: new Date(),
+            },
+          });
+
+          // Create status history entry
+          await this.prisma.orderStatusHistory.create({
+            data: {
+              orderId: order.id,
+              fromStatus: order.status,
+              toStatus: 'CONFIRMED',
+              note: 'Auto-accepted on Getir platform',
+            },
+          });
+
+          this.logger.log(`✅ Getir order ${order.orderNumber} auto-accepted`);
+
+          // Update order object for notification
+          order.status = 'CONFIRMED';
+        }
+      } catch (error) {
+        // If auto-accept fails (already verified or other error), use the platform status
+        this.logger.warn(`Auto-accept failed for Getir order ${order.orderNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        if (platformOrder.platformStatus && platformOrder.platformStatus !== 'PENDING') {
+          await this.prisma.order.update({
+            where: { id: order.id },
+            data: {
+              status: platformOrder.platformStatus,
+              confirmedAt: ['CONFIRMED', 'PREPARING', 'READY', 'ON_DELIVERY'].includes(platformOrder.platformStatus) ? new Date() : undefined,
+            },
+          });
+          order.status = platformOrder.platformStatus;
+        }
+      }
+    } else if (platformOrder.platformStatus) {
+      // Order already in later stages (PREPARING, READY, etc.), update our status to match
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          status: platformOrder.platformStatus,
+          confirmedAt: ['CONFIRMED', 'PREPARING', 'READY', 'ON_DELIVERY'].includes(platformOrder.platformStatus) ? new Date() : undefined,
+        },
+      });
+      order.status = platformOrder.platformStatus;
+      this.logger.log(`Getir order ${order.orderNumber} imported with status: ${platformOrder.platformStatus}`);
+    }
+
     // Emit real-time notification
     this.orderGateway.emitNewOrder(String(order.branchId), {
       id: order.id,
@@ -245,7 +377,7 @@ export class GetirSyncScheduler implements OnModuleInit {
       customerName: order.customerName,
       totalAmount: Number(order.totalAmount),
       branchId: order.branchId,
-      items: order.items.map((item) => ({
+      items: order.items.map((item: { productName: string; quantity: number }) => ({
         productName: item.productName,
         quantity: item.quantity,
       })),
@@ -258,8 +390,11 @@ export class GetirSyncScheduler implements OnModuleInit {
 
   /**
    * Create order from Getir platform order
+   * Includes retry logic for order number conflicts
    */
-  private async createOrder(platformOrder: PlatformOrder) {
+  private async createOrder(platformOrder: PlatformOrder, retryCount = 0): Promise<any> {
+    const maxRetries = 3;
+
     // Generate order number
     const orderNumber = await this.orderService.generateOrderNumber();
 
@@ -291,12 +426,16 @@ export class GetirSyncScheduler implements OnModuleInit {
     // Map products to order items
     const itemsData = [];
     for (const item of platformOrder.items) {
+      // Ensure name is a string
+      const itemName = typeof item.name === 'string' ? item.name : String(item.name || 'Ürün');
+
       // Try to find product by name
+      const searchTerms = itemName.split(' ').slice(0, 2).join(' ');
       const product = await this.prisma.product.findFirst({
         where: {
           OR: [
-            { name: { contains: item.name.split(' ').slice(0, 2).join(' ') } },
-            { name: item.name },
+            { name: { contains: searchTerms } },
+            { name: itemName },
           ],
         },
       });
@@ -318,7 +457,7 @@ export class GetirSyncScheduler implements OnModuleInit {
         // Create with default product ID 1 if no match found
         itemsData.push({
           productId: 1,
-          productName: item.name,
+          productName: itemName,
           quantity: item.quantity,
           unitPrice: new Prisma.Decimal(item.unitPrice),
           totalPrice: new Prisma.Decimal(totalPrice),
@@ -352,44 +491,56 @@ export class GetirSyncScheduler implements OnModuleInit {
       );
     }
 
-    // Create order with items
-    const order = await this.prisma.order.create({
-      data: {
-        orderNumber,
-        platform: Platform.GETIR,
-        platformOrderId: platformOrder.platformOrderId,
-        status: 'PENDING',
-        customerId: customer.id,
-        customerName: platformOrder.customer.name,
-        customerPhone: platformOrder.customer.phone,
-        customerAddress: platformOrder.customer.address,
-        customerNote: platformOrder.customer.note,
-        latitude: platformOrder.customer.latitude
-          ? new Prisma.Decimal(platformOrder.customer.latitude)
-          : null,
-        longitude: platformOrder.customer.longitude
-          ? new Prisma.Decimal(platformOrder.customer.longitude)
-          : null,
-        subtotal: new Prisma.Decimal(platformOrder.subtotal),
-        discount: new Prisma.Decimal(platformOrder.discount),
-        deliveryFee: new Prisma.Decimal(platformOrder.deliveryFee),
-        platformCommission: new Prisma.Decimal(platformCommission),
-        totalAmount: new Prisma.Decimal(platformOrder.totalAmount),
-        netAmount: new Prisma.Decimal(netAmount),
-        paymentMethod: platformOrder.paymentMethod,
-        paymentStatus: platformOrder.paymentMethod === 'ONLINE' ? 'PAID' : 'PENDING',
-        branchId: branch.id,
-        estimatedDelivery,
-        items: {
-          create: itemsData,
+    // Create order with items - with retry logic for order number conflicts
+    let order;
+    try {
+      order = await this.prisma.order.create({
+        data: {
+          orderNumber,
+          platform: Platform.GETIR,
+          platformOrderId: platformOrder.platformOrderId,
+          platformDisplayId: platformOrder.platformDisplayId,
+          status: 'PENDING',
+          customerId: customer.id,
+          customerName: platformOrder.customer.name,
+          customerPhone: platformOrder.customer.phone,
+          customerAddress: platformOrder.customer.address,
+          customerNote: platformOrder.customer.note,
+          latitude: platformOrder.customer.latitude
+            ? new Prisma.Decimal(platformOrder.customer.latitude)
+            : null,
+          longitude: platformOrder.customer.longitude
+            ? new Prisma.Decimal(platformOrder.customer.longitude)
+            : null,
+          subtotal: new Prisma.Decimal(platformOrder.subtotal),
+          discount: new Prisma.Decimal(platformOrder.discount),
+          deliveryFee: new Prisma.Decimal(platformOrder.deliveryFee),
+          platformCommission: new Prisma.Decimal(platformCommission),
+          totalAmount: new Prisma.Decimal(platformOrder.totalAmount),
+          netAmount: new Prisma.Decimal(netAmount),
+          paymentMethod: platformOrder.paymentMethod,
+          paymentStatus: platformOrder.paymentMethod === 'ONLINE' ? 'PAID' : 'PENDING',
+          branchId: branch.id,
+          estimatedDelivery,
+          items: {
+            create: itemsData,
+          },
         },
-      },
-      include: {
-        items: true,
-        customer: { select: { id: true, name: true, phone: true } },
-        branch: { select: { id: true, name: true } },
-      },
-    });
+        include: {
+          items: true,
+          customer: { select: { id: true, name: true, phone: true } },
+          branch: { select: { id: true, name: true } },
+        },
+      });
+    } catch (error) {
+      // If order number conflict, retry with new order number
+      if (error instanceof Error && error.message.includes('Unique constraint') && retryCount < maxRetries) {
+        this.logger.warn(`Order number conflict, retrying (${retryCount + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1))); // Small delay
+        return this.createOrder(platformOrder, retryCount + 1);
+      }
+      throw error;
+    }
 
     // Create initial status history
     await this.prisma.orderStatusHistory.create({
@@ -524,6 +675,140 @@ export class GetirSyncScheduler implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error(`Initial login check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Sync order statuses from Getir to Kokpit DB
+   * Fetches ALL orders from Getir (including delivered/cancelled) and updates DB
+   * Runs every 2 minutes
+   */
+  @Cron('0 */2 * * * *') // Every 2 minutes
+  async syncOrderStatuses() {
+    if (!this.isEnabled) {
+      return;
+    }
+
+    try {
+      this.logger.debug('Syncing order statuses from Getir...');
+
+      // Get all Getir orders from DB that are not in final state
+      const dbOrders = await this.prisma.order.findMany({
+        where: {
+          platform: Platform.GETIR,
+          platformOrderId: { startsWith: 'GETIR-' },
+          status: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'ON_DELIVERY'] },
+          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // Last 24 hours
+        },
+        select: {
+          id: true,
+          orderNumber: true,
+          platformOrderId: true,
+          status: true,
+          branchId: true,
+        },
+      });
+
+      if (dbOrders.length === 0) {
+        this.logger.debug('No active Getir orders to sync');
+        return;
+      }
+
+      // Fetch ALL orders from Getir (including delivered/cancelled)
+      const platformOrders = await this.getirAdapter.fetchAllOrdersForSync();
+
+      // Create a map for quick lookup
+      const platformOrderMap = new Map<string, string>();
+      for (const po of platformOrders) {
+        if (po.platformStatus) {
+          platformOrderMap.set(po.platformOrderId, po.platformStatus);
+        }
+      }
+
+      let updatedCount = 0;
+
+      // Status priority order (higher index = more advanced in workflow)
+      const statusPriority: Record<string, number> = {
+        PENDING: 0,
+        CONFIRMED: 1,
+        PREPARING: 2,
+        READY: 3,
+        ON_DELIVERY: 4,
+        DELIVERED: 5,
+        CANCELLED: 5, // Same as DELIVERED - both are final
+      };
+
+      // Check each DB order against Getir status
+      for (const dbOrder of dbOrders) {
+        if (!dbOrder.platformOrderId) continue;
+
+        const platformStatusStr = platformOrderMap.get(dbOrder.platformOrderId);
+
+        if (platformStatusStr && platformStatusStr !== dbOrder.status) {
+          // Cast to OrderStatus type
+          const platformStatus = platformStatusStr as 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'ON_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+
+          const dbPriority = statusPriority[dbOrder.status] ?? 0;
+          const platformPriority = statusPriority[platformStatus] ?? 0;
+
+          // Only sync from Getir if:
+          // 1. Platform status is more advanced (forward progress)
+          // 2. OR platform status is a final state (DELIVERED/CANCELLED) - Getir has authority
+          const isFinalState = platformStatus === 'DELIVERED' || platformStatus === 'CANCELLED';
+          const isForwardProgress = platformPriority > dbPriority;
+
+          if (!isFinalState && !isForwardProgress) {
+            this.logger.debug(
+              `Skipping backward sync for ${dbOrder.orderNumber}: DB=${dbOrder.status} (${dbPriority}), Getir=${platformStatus} (${platformPriority})`,
+            );
+            continue;
+          }
+
+          this.logger.log(
+            `Syncing ${dbOrder.orderNumber}: ${dbOrder.status} → ${platformStatus} (${isFinalState ? 'final state' : 'forward progress'})`,
+          );
+
+          // Update DB status to match Getir
+          await this.prisma.order.update({
+            where: { id: dbOrder.id },
+            data: {
+              status: platformStatus,
+              ...(platformStatus === 'DELIVERED' ? { deliveredAt: new Date() } : {}),
+              ...(platformStatus === 'CANCELLED' ? { cancelledAt: new Date() } : {}),
+            },
+          });
+
+          // Create status history
+          await this.prisma.orderStatusHistory.create({
+            data: {
+              orderId: dbOrder.id,
+              fromStatus: dbOrder.status,
+              toStatus: platformStatus,
+              note: 'Status synced from Getir platform',
+            },
+          });
+
+          // Emit WebSocket update
+          this.orderGateway.emitOrderStatusChanged(
+            String(dbOrder.branchId),
+            dbOrder.id,
+            platformStatus,
+            dbOrder.status,
+          );
+
+          this.logger.log(
+            `Getir order ${dbOrder.orderNumber} status synced: ${dbOrder.status} → ${platformStatus}`,
+          );
+
+          updatedCount++;
+        }
+      }
+
+      if (updatedCount > 0) {
+        this.logger.log(`Synced ${updatedCount} Getir order statuses`);
+      }
+    } catch (error) {
+      this.logger.error(`Error syncing Getir order statuses: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

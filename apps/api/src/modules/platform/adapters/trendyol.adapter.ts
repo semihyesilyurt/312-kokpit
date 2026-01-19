@@ -27,30 +27,105 @@ interface TrendyolLoginResponse {
   accessToken?: string; // Some endpoints may use accessToken
 }
 
-interface TrendyolOrderItem {
-  id: string;
-  name: string;
-  productName: string;
-  quantity: number;
-  price: number;
-  notes?: string;
+/**
+ * Trendyol order line item (nested in orderLines)
+ */
+interface TrendyolOrderLineItem {
+  id: number;
+  status: string;
+  packageItemId: string;
+  isCancelled: boolean;
 }
 
+/**
+ * Trendyol order line (product)
+ */
+interface TrendyolOrderLine {
+  id: number;
+  name: string;
+  orderLineItems: TrendyolOrderLineItem[];
+  isClaimRateExceeded?: boolean;
+  price?: number; // May be present in some responses
+  quantity?: number;
+}
+
+/**
+ * Trendyol order payment info
+ */
+interface TrendyolOrderPayment {
+  paymentType: string; // 'PAY_WITH_CARD', 'PAY_AT_DOOR_WITH_CASH', etc.
+  mealCard: string | null;
+  onDelivery: string | null;
+}
+
+/**
+ * Trendyol delivery address info
+ */
+interface TrendyolDeliveryAddress {
+  id?: number;
+  address?: string;
+  description?: string;
+  doorDescription?: string;
+  buildingNo?: string;
+  apartmentNo?: string;
+  floor?: string;
+  district?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+/**
+ * Trendyol customer info
+ */
+interface TrendyolCustomer {
+  id: number;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  address?: string;
+  sellerBasedNewUser?: boolean;
+  // Extended address fields
+  deliveryAddress?: TrendyolDeliveryAddress;
+  addressDescription?: string;
+}
+
+/**
+ * Trendyol order structure (actual API response)
+ */
 interface TrendyolOrder {
-  id: string;
+  orderId: number;
+  orderCode: string;
   packageId: string;
-  orderNumber: string;
-  status: string;
-  totalAmount: number;
-  createdAt: string;
-  customer: {
-    name: string;
-    phone?: string;
-    address?: string;
-  };
-  items: TrendyolOrderItem[];
+  orderParentId: number;
+  orderStatus: string;
+  totalOrderPrice: number;
+  packageCreationDate: number; // Unix timestamp in milliseconds
+  customer: TrendyolCustomer;
+  orderLines: TrendyolOrderLine[];
+  orderPayment: TrendyolOrderPayment;
   deliveryType: 'GO' | 'PICKUP';
-  paymentMethod: string;
+  eta?: string;
+  preparationTime?: number;
+  estimatedDeliveryEndDate?: number;
+  // Note and address fields
+  orderNote?: string;
+  customerNote?: string;
+  note?: string;
+  notes?: string;
+  deliveryNote?: string;
+  description?: string;
+  addressDescription?: string;
+  deliveryAddress?: TrendyolDeliveryAddress;
+  // Legacy fields for backward compatibility
+  id?: string;
+  packageId_legacy?: string;
+  orderNumber?: string;
+  status?: string;
+  totalAmount?: number;
+  createdAt?: string;
+  items?: { id: string; name: string; productName: string; quantity: number; price: number; notes?: string }[];
+  paymentMethod?: string;
 }
 
 interface TrendyolActiveOrdersResponse {
@@ -400,27 +475,42 @@ export class TrendyolAdapter implements PlatformAdapter, OnModuleInit {
         `${this.baseUrl}/sellers/packages/stores/${this.storeId}`,
       );
 
+      // Debug: Log raw response structure
+      const totalOrders = (response.newOrders?.length || 0) +
+                         (response.pickedOrders?.length || 0) +
+                         (response.invoicedOrders?.length || 0) +
+                         (response.shippedOrders?.length || 0);
+
       const orders: PlatformOrder[] = [];
 
-      // Process new orders
-      for (const order of response.newOrders || []) {
-        orders.push(this.transformOrder(order, 'NEW'));
-      }
+      // Helper to process orders with details
+      const processOrdersWithDetails = async (orderList: TrendyolOrder[], status: string) => {
+        for (const order of orderList || []) {
+          // Fetch detailed info including notes
+          const details = await this.fetchOrderDetails(order.packageId, order.orderId);
 
-      // Process picked (preparing) orders
-      for (const order of response.pickedOrders || []) {
-        orders.push(this.transformOrder(order, 'PICKED'));
-      }
+          // Merge details into order
+          if (details) {
+            if (details.customerNote) {
+              (order as any).customerNote = details.customerNote;
+            }
+            if (details.deliveryAddress) {
+              (order as any).deliveryAddress = details.deliveryAddress;
+            }
+            if (details.customerPhone && details.customerPhone.length > 0) {
+              order.customer = { ...order.customer, phone: details.customerPhone };
+            }
+          }
 
-      // Process invoiced (ready) orders
-      for (const order of response.invoicedOrders || []) {
-        orders.push(this.transformOrder(order, 'INVOICED'));
-      }
+          orders.push(this.transformOrder(order, status));
+        }
+      };
 
-      // Process shipped (on delivery) orders
-      for (const order of response.shippedOrders || []) {
-        orders.push(this.transformOrder(order, 'SHIPPED'));
-      }
+      // Process all order types
+      await processOrdersWithDetails(response.newOrders, 'NEW');
+      await processOrdersWithDetails(response.pickedOrders, 'PICKED');
+      await processOrdersWithDetails(response.invoicedOrders, 'INVOICED');
+      await processOrdersWithDetails(response.shippedOrders, 'SHIPPED');
 
       this.logger.log(`Fetched ${orders.length} orders from Trendyol GO Yemek`);
       return orders;
@@ -434,35 +524,139 @@ export class TrendyolAdapter implements PlatformAdapter, OnModuleInit {
    * Transform Trendyol order to PlatformOrder format
    */
   private transformOrder(trendyolOrder: TrendyolOrder, status: string): PlatformOrder {
-    const totalAmount = trendyolOrder.totalAmount;
+    // Get total amount from new API field or legacy field
+    const totalAmount = trendyolOrder.totalOrderPrice ?? trendyolOrder.totalAmount ?? 0;
     const deliveryFee = 0; // Trendyol includes delivery in platform fee
     const discount = 0;
     const subtotal = totalAmount;
 
-    // Map payment method
+    // Map payment method from new API structure
     let paymentMethod: 'CASH' | 'CREDIT_CARD' | 'ONLINE' = 'ONLINE';
-    if (trendyolOrder.paymentMethod?.toLowerCase().includes('cash')) {
+    const paymentType = trendyolOrder.orderPayment?.paymentType || trendyolOrder.paymentMethod || '';
+    if (paymentType.toLowerCase().includes('cash') || paymentType.includes('DOOR')) {
       paymentMethod = 'CASH';
-    } else if (trendyolOrder.paymentMethod?.toLowerCase().includes('card')) {
+    } else if (paymentType.toLowerCase().includes('card')) {
       paymentMethod = 'CREDIT_CARD';
     }
 
-    // Transform items
-    const items = (trendyolOrder.items || []).map((item) => ({
-      platformProductId: `TRENDYOL-${item.id || item.productName}`,
-      name: item.productName || item.name,
-      quantity: item.quantity,
-      unitPrice: item.price,
-      notes: item.notes,
-    }));
+    // Transform items from new API structure (orderLines) or legacy (items)
+    let items: { platformProductId: string; name: string; quantity: number; unitPrice: number; notes?: string }[] = [];
+
+    if (trendyolOrder.orderLines && trendyolOrder.orderLines.length > 0) {
+      // New API structure
+      const itemCount = trendyolOrder.orderLines.length;
+      const pricePerItem = itemCount > 0 ? totalAmount / itemCount : 0;
+
+      items = trendyolOrder.orderLines.map((line) => {
+        // Count non-cancelled items
+        const quantity = line.orderLineItems?.filter(item => !item.isCancelled).length || line.quantity || 1;
+
+        return {
+          platformProductId: `TRENDYOL-${line.id}`,
+          name: line.name || 'Bilinmeyen Ürün',
+          quantity,
+          unitPrice: line.price ?? pricePerItem, // Use line price if available, otherwise distribute total
+          notes: undefined,
+        };
+      });
+    } else if (trendyolOrder.items && trendyolOrder.items.length > 0) {
+      // Legacy structure
+      items = trendyolOrder.items.map((item) => ({
+        platformProductId: `TRENDYOL-${item.id || item.productName || 'unknown'}`,
+        name: item.productName || item.name || 'Bilinmeyen Ürün',
+        quantity: item.quantity ?? 1,
+        unitPrice: item.price ?? 0,
+        notes: item.notes,
+      }));
+    }
+
+    // Build customer name from firstName + lastName or use legacy name
+    const customerName = trendyolOrder.customer?.firstName && trendyolOrder.customer?.lastName
+      ? `${trendyolOrder.customer.firstName} ${trendyolOrder.customer.lastName}`
+      : (trendyolOrder.customer as any)?.name || 'Trendyol Müşteri';
+
+    // Get creation date from timestamp or legacy string
+    const createdAt = trendyolOrder.packageCreationDate
+      ? new Date(trendyolOrder.packageCreationDate)
+      : new Date(trendyolOrder.createdAt || Date.now());
+
+    // Get order ID - prefer packageId
+    const orderId = trendyolOrder.packageId || trendyolOrder.id || String(trendyolOrder.orderId);
+
+    // Platform display ID - the order code shown in Trendyol panel
+    const platformDisplayId = trendyolOrder.orderCode || String(trendyolOrder.orderId);
+
+    // Calculate estimated delivery from ETA or default
+    let estimatedDeliveryMinutes = 35;
+    if (trendyolOrder.eta) {
+      // Parse "40 - 50 dk" format
+      const match = trendyolOrder.eta.match(/(\d+)/);
+      if (match) {
+        estimatedDeliveryMinutes = parseInt(match[1], 10);
+      }
+    }
+
+    // Extract customer notes from various possible fields
+    const noteParts: string[] = [];
+
+    // Order-level notes
+    if (trendyolOrder.orderNote) noteParts.push(trendyolOrder.orderNote);
+    if (trendyolOrder.customerNote) noteParts.push(trendyolOrder.customerNote);
+    if (trendyolOrder.note) noteParts.push(trendyolOrder.note);
+    if (trendyolOrder.notes) noteParts.push(trendyolOrder.notes);
+    if (trendyolOrder.deliveryNote) noteParts.push(trendyolOrder.deliveryNote);
+    if (trendyolOrder.description) noteParts.push(trendyolOrder.description);
+    if (trendyolOrder.addressDescription) noteParts.push(trendyolOrder.addressDescription);
+
+    // Delivery address description/notes
+    if (trendyolOrder.deliveryAddress?.description) {
+      noteParts.push(trendyolOrder.deliveryAddress.description);
+    }
+    if (trendyolOrder.deliveryAddress?.doorDescription) {
+      noteParts.push(trendyolOrder.deliveryAddress.doorDescription);
+    }
+
+    // Customer-level address description
+    if (trendyolOrder.customer?.addressDescription) {
+      noteParts.push(trendyolOrder.customer.addressDescription);
+    }
+    if (trendyolOrder.customer?.deliveryAddress?.description) {
+      noteParts.push(trendyolOrder.customer.deliveryAddress.description);
+    }
+    if (trendyolOrder.customer?.deliveryAddress?.doorDescription) {
+      noteParts.push(trendyolOrder.customer.deliveryAddress.doorDescription);
+    }
+
+    // Combine unique notes
+    const customerNote = [...new Set(noteParts.filter(Boolean))].join(' | ');
+
+    // Get address - prefer deliveryAddress if available
+    const customerAddress = trendyolOrder.deliveryAddress?.address
+      || trendyolOrder.customer?.deliveryAddress?.address
+      || trendyolOrder.customer?.address
+      || '';
+
+    // Get coordinates if available
+    const latitude = trendyolOrder.deliveryAddress?.latitude
+      || trendyolOrder.customer?.deliveryAddress?.latitude;
+    const longitude = trendyolOrder.deliveryAddress?.longitude
+      || trendyolOrder.customer?.deliveryAddress?.longitude;
+
+    // Map Trendyol status to internal status
+    const platformStatus = TRENDYOL_STATUS_MAP[status] || 'PENDING';
 
     return {
-      platformOrderId: `TRENDYOL-${trendyolOrder.packageId || trendyolOrder.id}`,
+      platformOrderId: `TRENDYOL-${orderId}`,
+      platformDisplayId,
       platform: Platform.TRENDYOL,
+      platformStatus,
       customer: {
-        name: trendyolOrder.customer?.name || 'Trendyol Müşteri',
+        name: customerName,
         phone: trendyolOrder.customer?.phone || '+905000000000',
-        address: trendyolOrder.customer?.address || '',
+        address: customerAddress,
+        note: customerNote || undefined,
+        latitude,
+        longitude,
       },
       items,
       subtotal,
@@ -470,8 +664,8 @@ export class TrendyolAdapter implements PlatformAdapter, OnModuleInit {
       discount,
       totalAmount,
       paymentMethod,
-      estimatedDeliveryMinutes: 35,
-      createdAt: new Date(trendyolOrder.createdAt || Date.now()),
+      estimatedDeliveryMinutes,
+      createdAt,
     };
   }
 
@@ -538,12 +732,30 @@ export class TrendyolAdapter implements PlatformAdapter, OnModuleInit {
         return false;
       }
 
-      // Note: Actual endpoint structure depends on Trendyol API
-      await this.apiRequest(
-        `${this.baseUrl}/sellers/packages/${packageId}/status`,
-        'POST',
-        { status: trendyolStatus },
-      );
+      // Trendyol uses different endpoints for each status transition
+      // PUT /sellers/packages/{packageId}/{status_lowercase}
+      let endpoint: string;
+      let method: 'PUT' | 'POST' = 'PUT';
+
+      switch (trendyolStatus) {
+        case 'PICKED':
+          // Start preparing
+          endpoint = `${this.baseUrl}/sellers/packages/${packageId}/picked`;
+          break;
+        case 'INVOICED':
+          // Ready for pickup
+          endpoint = `${this.baseUrl}/sellers/packages/${packageId}/invoiced`;
+          break;
+        case 'SHIPPED':
+          // On delivery
+          endpoint = `${this.baseUrl}/sellers/packages/${packageId}/shipped`;
+          break;
+        default:
+          this.logger.warn(`No Trendyol endpoint for status: ${trendyolStatus}`);
+          return false;
+      }
+
+      await this.apiRequest(endpoint, method);
 
       this.logger.log(`Order status updated on Trendyol: ${platformOrderId} -> ${trendyolStatus}`);
       return true;
@@ -679,5 +891,55 @@ export class TrendyolAdapter implements PlatformAdapter, OnModuleInit {
     );
 
     return response.data?.items || [];
+  }
+
+  /**
+   * Fetch detailed order information including notes
+   * The list API doesn't include notes - we need to fetch each order's details
+   */
+  async fetchOrderDetails(packageId: string, orderId?: number): Promise<{
+    customerNote?: string;
+    deliveryAddress?: TrendyolDeliveryAddress;
+    customerPhone?: string;
+  } | null> {
+    // Try multiple endpoints to find order details with notes
+    const endpoints = [
+      `${this.baseUrl}/sellers/packages/${packageId}/detail`,
+      `${this.baseUrl}/sellers/packages/${packageId}`,
+      `${this.baseUrl2}/order-meal-seller-order-gw-service/sellers/${this.sellerId}/orders/${orderId || 'unknown'}`,
+      `${this.baseUrl2}/order-meal-seller-order-gw-service/packages/${packageId}`,
+      `${this.baseUrl2}/delivery-orange-externalgateway-service/seller-gw/packages/${packageId}`,
+      `${this.baseUrl2}/localcommerce-seller-seller-center-order-bff-service/orders/${orderId || 'unknown'}`,
+    ];
+
+    for (const endpoint of endpoints) {
+      if (endpoint.includes('unknown')) continue;
+
+      try {
+        const response = await this.apiRequest<any>(endpoint);
+
+        // Check for notes - customerNote is at response root level in detail endpoint
+        const customerNote = response?.customerNote || response?.orderNote ||
+          response?.note || response?.notes || response?.specialInstructions ||
+          response?.addressNote || response?.deliveryNote ||
+          response?.customer?.addressDescription || response?.customer?.note ||
+          response?.data?.customerNote || response?.data?.orderNote;
+
+        const deliveryAddress = response?.deliveryAddress || response?.data?.deliveryAddress ||
+          response?.customer?.deliveryAddress;
+        const customerPhone = response?.customer?.phone || response?.customerPhone ||
+          response?.data?.customer?.phone;
+
+        // Return if we found customer note or other data
+        if (customerNote || deliveryAddress || (customerPhone && customerPhone.length > 0)) {
+          return { customerNote, deliveryAddress, customerPhone };
+        }
+      } catch {
+        this.logger.debug(`Endpoint ${endpoint} failed, trying next...`);
+      }
+    }
+
+    this.logger.debug(`Could not fetch order details with notes for ${packageId}`);
+    return null;
   }
 }

@@ -14,11 +14,14 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '@/prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, Platform, OrderStatus as PrismaOrderStatus } from '@prisma/client';
+import { PlatformAdapter } from '../platform/adapters/platform-adapter.interface';
 import { OrderGateway } from './order.gateway';
 import {
   CreateOrderDto,
@@ -51,6 +54,11 @@ const PLATFORM_COMMISSION_RATES: Record<string, number> = {
   POS: 0,
 };
 
+/**
+ * Type for platform adapters map
+ */
+type PlatformAdaptersMap = Partial<Record<Platform, PlatformAdapter>>;
+
 @Injectable()
 export class OrderService {
   private readonly logger = new Logger(OrderService.name);
@@ -59,6 +67,9 @@ export class OrderService {
     private readonly prisma: PrismaService,
     private readonly orderGateway: OrderGateway,
     @InjectQueue('orders') private readonly orderQueue: Queue,
+    @Optional()
+    @Inject('PLATFORM_ADAPTERS')
+    private readonly platformAdapters?: PlatformAdaptersMap,
   ) {}
 
   /**
@@ -69,24 +80,36 @@ export class OrderService {
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
 
-    // Get count of orders for today to generate sequence
+    // Get the maximum order number for today to ensure uniqueness
     const startOfDay = new Date(today);
     startOfDay.setHours(0, 0, 0, 0);
 
     const endOfDay = new Date(today);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const todayOrderCount = await this.prisma.order.count({
+    // Find the latest order number for today
+    const latestOrder = await this.prisma.order.findFirst({
       where: {
-        createdAt: {
-          gte: startOfDay,
-          lte: endOfDay,
-        },
+        orderNumber: { startsWith: `ORD-${dateStr}` },
       },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true },
     });
 
+    let nextSequence = 1;
+    if (latestOrder?.orderNumber) {
+      // Extract the sequence number from the latest order
+      const parts = latestOrder.orderNumber.split('-');
+      if (parts.length === 3) {
+        const lastSequence = parseInt(parts[2], 10);
+        if (!isNaN(lastSequence)) {
+          nextSequence = lastSequence + 1;
+        }
+      }
+    }
+
     // Generate 4-digit sequence number (padded with zeros)
-    const sequence = String(todayOrderCount + 1).padStart(4, '0');
+    const sequence = String(nextSequence).padStart(4, '0');
 
     return `ORD-${dateStr}-${sequence}`;
   }
@@ -641,6 +664,46 @@ export class OrderService {
   }
 
   /**
+   * Update order status on the external platform (Trendyol, Getir, etc.)
+   * This is called after updating local status to sync with the platform
+   */
+  private async updatePlatformOrderStatus(
+    platform: Platform,
+    platformOrderId: string | null,
+    newStatus: PrismaOrderStatus,
+  ): Promise<void> {
+    // Skip if no platform adapters available or no platformOrderId
+    if (!this.platformAdapters || !platformOrderId) {
+      return;
+    }
+
+    // Skip for direct/POS orders - they don't have external platforms
+    if (platform === Platform.DIRECT || platform === Platform.POS) {
+      return;
+    }
+
+    const adapter = this.platformAdapters[platform];
+    if (!adapter) {
+      this.logger.debug(`No adapter found for platform: ${platform}`);
+      return;
+    }
+
+    try {
+      const success = await adapter.updateOrderStatus(platformOrderId, newStatus);
+      if (success) {
+        this.logger.log(`Platform ${platform} status updated: ${platformOrderId} -> ${newStatus}`);
+      } else {
+        this.logger.warn(`Failed to update platform ${platform} status for order ${platformOrderId}`);
+      }
+    } catch (error) {
+      // Log error but don't fail the operation - local status is already updated
+      this.logger.error(
+        `Error updating platform ${platform} status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  /**
    * Update order status with transition validation
    */
   async updateStatus(
@@ -754,6 +817,16 @@ export class OrderService {
       newStatus,
       currentStatus,
     );
+
+    // Update status on external platform (Trendyol, Getir, etc.)
+    // This is done asynchronously to not block the response
+    this.updatePlatformOrderStatus(
+      order.platform as Platform,
+      order.platformOrderId,
+      newStatus as PrismaOrderStatus,
+    ).catch((error) => {
+      this.logger.error(`Failed to update platform status: ${error.message}`);
+    });
 
     this.logger.log(
       `Order ${id} status changed: ${currentStatus} -> ${newStatus}`,

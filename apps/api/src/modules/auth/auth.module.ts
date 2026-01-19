@@ -10,8 +10,8 @@
  * - Password change functionality
  *
  * Token Configuration:
- * - Access Token: 15 minutes (configurable via JWT_EXPIRES_IN)
- * - Refresh Token: 7 days (configurable via JWT_REFRESH_EXPIRES_IN)
+ * - Access Token: 24 hours (configurable via JWT_EXPIRES_IN)
+ * - Refresh Token: 30 days (configurable via JWT_REFRESH_EXPIRES_IN)
  */
 
 import { Module } from '@nestjs/common';
@@ -37,7 +37,7 @@ import { RolesGuard } from './guards/roles.guard';
         if (!secret) {
           throw new Error('JWT secret is not configured');
         }
-        const expiresIn = configService.get<string>('jwt.expiresIn', '15m');
+        const expiresIn = configService.get<string>('jwt.expiresIn', '24h');
         return {
           secret,
           signOptions: {

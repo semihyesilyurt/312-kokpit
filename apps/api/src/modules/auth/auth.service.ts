@@ -4,8 +4,8 @@
  *
  * Features:
  * - Email/password validation with bcrypt
- * - JWT access token generation (15m expiry)
- * - Refresh token management with rotation (7d expiry)
+ * - JWT access token generation (24h expiry)
+ * - Refresh token management with rotation (30d expiry)
  * - Secure password change with verification
  * - User session management
  *
@@ -142,7 +142,7 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload);
 
     // Generate refresh token with separate secret and longer expiry
-    const refreshTokenExpiry = this.configService.get<string>('jwt.refreshExpiresIn', '7d');
+    const refreshTokenExpiry = this.configService.get<string>('jwt.refreshExpiresIn', '30d');
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.configService.get<string>('jwt.refreshSecret'),
       expiresIn: refreshTokenExpiry as JwtSignOptions['expiresIn'],
@@ -413,8 +413,8 @@ export class AuthService {
   private calculateExpiryDate(duration: string): Date {
     const match = duration.match(/^(\d+)([smhd])$/);
     if (!match) {
-      // Default to 7 days if parsing fails
-      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      // Default to 30 days if parsing fails
+      return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
 
     const value = parseInt(match[1], 10);
@@ -435,9 +435,9 @@ export class AuthService {
    * @returns Expiry time in seconds
    */
   private getExpiresInSeconds(): number {
-    const expiresIn = this.configService.get<string>('jwt.expiresIn', '15m');
+    const expiresIn = this.configService.get<string>('jwt.expiresIn', '24h');
     const match = expiresIn.match(/^(\d+)([smhd])$/);
-    if (!match) return 900; // Default 15 minutes
+    if (!match) return 86400; // Default 24 hours
 
     const value = parseInt(match[1], 10);
     const unit = match[2];

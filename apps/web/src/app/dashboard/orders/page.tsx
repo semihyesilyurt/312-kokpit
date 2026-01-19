@@ -75,113 +75,9 @@ const normalizeStatus = (status: string): string => {
 // Helper to get status config (case-insensitive)
 const getStatusConfig = (status: string) => STATUS_CONFIG[normalizeStatus(status)] || { label: status, color: 'text-gray-500', bgColor: 'bg-gray-100' };
 
-// Kanban column order
-const KANBAN_COLUMNS: string[] = ['confirmed', 'preparing', 'ready', 'on_delivery', 'completed'];
+// Kanban column order (pending first for new orders awaiting confirmation)
+const KANBAN_COLUMNS: string[] = ['pending', 'confirmed', 'preparing', 'ready', 'on_delivery', 'completed'];
 
-// Mock data for development
-const mockOrders: Order[] = [
-  {
-    id: '1',
-    orderNumber: '127',
-    platform: 'yemeksepeti',
-    status: 'pending',
-    customer: { name: 'Ahmet Yilmaz', phone: '5321234567', address: 'Kizilay Mah. No:15' },
-    items: [
-      { id: '1', productId: 'p1', productName: 'Doner Durum', quantity: 2, unitPrice: 35, totalPrice: 70 },
-      { id: '2', productId: 'p2', productName: 'Ayran', quantity: 2, unitPrice: 10, totalPrice: 20 },
-    ],
-    subtotal: 90,
-    deliveryFee: 15,
-    discount: 0,
-    total: 105,
-    paymentMethod: 'online',
-    isPaid: true,
-    createdAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    orderNumber: '126',
-    platform: 'getir',
-    status: 'preparing',
-    customer: { name: 'Mehmet Demir', phone: '5329876543', address: 'Cankaya Mah. Sok:8/A' },
-    items: [
-      { id: '3', productId: 'p3', productName: 'Iskender', quantity: 1, unitPrice: 120, totalPrice: 120 },
-      { id: '4', productId: 'p4', productName: 'Cola', quantity: 2, unitPrice: 15, totalPrice: 30 },
-    ],
-    subtotal: 150,
-    deliveryFee: 25,
-    discount: 0,
-    total: 175,
-    paymentMethod: 'cash',
-    isPaid: false,
-    createdAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    orderNumber: '125',
-    platform: 'phone',
-    status: 'ready',
-    customer: { name: 'Ayse Kaya', phone: '5335551234', address: 'Bahcelievler Mah. Cad:22' },
-    items: [
-      { id: '5', productId: 'p5', productName: 'Lahmacun', quantity: 3, unitPrice: 25, totalPrice: 75 },
-    ],
-    subtotal: 75,
-    deliveryFee: 20,
-    discount: 0,
-    total: 95,
-    paymentMethod: 'credit_card',
-    isPaid: true,
-    createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '4',
-    orderNumber: '124',
-    platform: 'trendyol',
-    status: 'on_delivery',
-    customer: { name: 'Fatma Ozturk', phone: '5341112233', address: 'Ulus Mah. Apt:5' },
-    items: [
-      { id: '6', productId: 'p6', productName: 'Adana Kebap', quantity: 2, unitPrice: 85, totalPrice: 170 },
-    ],
-    subtotal: 170,
-    deliveryFee: 30,
-    discount: 10,
-    total: 190,
-    paymentMethod: 'online',
-    isPaid: true,
-    courierId: 'c1',
-    courierName: 'Ali Kurye',
-    createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '5',
-    orderNumber: '123',
-    platform: 'walkin',
-    status: 'completed',
-    customer: { name: 'Can Yildirim', phone: '5357778899', address: 'Magazada' },
-    items: [
-      { id: '7', productId: 'p7', productName: 'Tavuk Doner', quantity: 1, unitPrice: 45, totalPrice: 45 },
-    ],
-    subtotal: 45,
-    deliveryFee: 0,
-    discount: 0,
-    total: 45,
-    paymentMethod: 'cash',
-    isPaid: true,
-    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
-
-// Mock couriers
-const mockCouriers: Courier[] = [
-  { id: 'c1', name: 'Ali Kurye', phone: '5321111111', status: 'available', vehicleType: 'motorcycle', activeDeliveries: 1, todayDeliveries: 12, cashBalance: 450, rating: 4.8 },
-  { id: 'c2', name: 'Veli Kurye', phone: '5322222222', status: 'available', vehicleType: 'motorcycle', activeDeliveries: 0, todayDeliveries: 8, cashBalance: 280, rating: 4.6 },
-  { id: 'c3', name: 'Hasan Kurye', phone: '5323333333', status: 'busy', vehicleType: 'bicycle', activeDeliveries: 2, todayDeliveries: 6, cashBalance: 150, rating: 4.5 },
-];
 
 // Order Card Component
 function OrderCard({
@@ -210,7 +106,7 @@ function OrderCard({
             >
               {getPlatformLabel(order.platform).charAt(0)}
             </span>
-            <span className="font-bold">#{order.orderNumber}</span>
+            <span className="font-bold">#{order.platformDisplayId || order.orderNumber}</span>
           </div>
           <span className="text-xs text-muted-foreground">
             {formatRelativeTime(order.createdAt)}
@@ -303,7 +199,7 @@ function OrderDetailModal({
             </span>
             <div>
               <h2 id="order-detail-title" className="font-bold text-lg">
-                Siparis #{order.orderNumber}
+                Siparis #{order.platformDisplayId || order.orderNumber}
               </h2>
               <p className="text-sm text-muted-foreground">
                 {getPlatformLabel(order.platform)}
@@ -559,14 +455,21 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Fetch orders with retry
+  // Fetch orders with retry - optimized for kanban view
   const { data: ordersData, isLoading, isError, refetch } = useQuery<OrdersResponse>({
     queryKey: ['orders', selectedStatus, selectedPlatform, searchQuery],
     queryFn: async () => {
       const params: Record<string, string> = {};
-      if (selectedStatus !== 'all') params.status = selectedStatus.toUpperCase();
+
+      if (selectedStatus !== 'all') {
+        params.status = selectedStatus.toUpperCase();
+      }
+
       if (selectedPlatform !== 'all') params.platform = selectedPlatform.toUpperCase();
       if (searchQuery) params.search = searchQuery;
+
+      // Increase limit for better initial load
+      params.limit = '50';
       // API interceptor unwraps response to { data: [...], meta: {...} }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response: any = await api.get('/orders', { params });
@@ -582,6 +485,7 @@ export default function OrdersPage() {
         orderNumber: item.orderNumber,
         platform: item.platform,
         platformOrderId: item.platformOrderId,
+        platformDisplayId: item.platformDisplayId,
         status: normalizeStatus(item.status),
         customer: {
           name: item.customerName || item.customer?.name || '',
@@ -622,6 +526,8 @@ export default function OrdersPage() {
     },
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    staleTime: 5000, // Consider data fresh for 5 seconds to prevent excessive refetches
+    refetchOnWindowFocus: false, // Disable refetch on window focus for better performance
   });
 
   // Fetch couriers for assignment with retry
@@ -671,9 +577,8 @@ export default function OrdersPage() {
     },
   });
 
-  // Handle status change (with optimistic update for mock data)
+  // Handle status change
   const handleStatusChange = useCallback((orderId: string, status: OrderStatus) => {
-    // For development, update mock data
     updateStatusMutation.mutate({ orderId, status });
   }, [updateStatusMutation]);
 
@@ -928,7 +833,7 @@ export default function OrdersPage() {
                       onClick={() => setSelectedOrder(order)}
                     >
                       <td className="p-3">
-                        <span className="font-bold">#{order.orderNumber}</span>
+                        <span className="font-bold">#{order.platformDisplayId || order.orderNumber}</span>
                       </td>
                       <td className="p-3">
                         <div>

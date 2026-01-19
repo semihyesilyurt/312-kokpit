@@ -11,7 +11,9 @@ import { Platform, OrderStatus } from '@prisma/client';
  */
 export interface PlatformOrder {
   platformOrderId: string;
+  platformDisplayId?: string; // Platform's visible order number (e.g., Trendyol orderCode, Getir confirmationId)
   platform: Platform;
+  platformStatus?: OrderStatus; // Status from platform (mapped to internal status)
   customer: {
     name: string;
     phone: string;

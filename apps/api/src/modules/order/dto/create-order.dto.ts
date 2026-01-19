@@ -32,6 +32,7 @@ export enum Platform {
   GETIR = 'GETIR',
   YEMEKSEPETI = 'YEMEKSEPETI',
   TRENDYOL = 'TRENDYOL',
+  MIGROS = 'MIGROS',
   DIRECT = 'DIRECT',
   POS = 'POS',
 }

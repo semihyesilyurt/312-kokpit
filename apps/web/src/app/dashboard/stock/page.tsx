@@ -52,200 +52,6 @@ const UNIT_LABELS: Record<string, string> = {
   porsiyon: 'porsiyon',
 };
 
-// Mock stock data
-const mockStockItems: StockItem[] = [
-  {
-    id: 's1',
-    name: 'Dana Eti (Doner)',
-    category: 'et',
-    unit: 'kg',
-    currentStock: 5,
-    theoreticalStock: 8,
-    minStock: 10,
-    maxStock: 50,
-    unitCost: 450,
-    lastUpdated: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    fireRate: 37.5,
-    isLow: true,
-    isCritical: true,
-  },
-  {
-    id: 's2',
-    name: 'Tavuk Eti',
-    category: 'et',
-    unit: 'kg',
-    currentStock: 12,
-    theoreticalStock: 14,
-    minStock: 8,
-    maxStock: 40,
-    unitCost: 180,
-    lastUpdated: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-    fireRate: 14.3,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's3',
-    name: 'Ayran',
-    category: 'icecek',
-    unit: 'adet',
-    currentStock: 15,
-    theoreticalStock: 18,
-    minStock: 20,
-    maxStock: 100,
-    unitCost: 8,
-    lastUpdated: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    fireRate: 16.7,
-    isLow: true,
-    isCritical: false,
-  },
-  {
-    id: 's4',
-    name: 'Cola 330ml',
-    category: 'icecek',
-    unit: 'adet',
-    currentStock: 48,
-    theoreticalStock: 50,
-    minStock: 30,
-    maxStock: 200,
-    unitCost: 15,
-    lastUpdated: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    fireRate: 4,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's5',
-    name: 'Lavash Ekmek',
-    category: 'diger',
-    unit: 'adet',
-    currentStock: 85,
-    theoreticalStock: 90,
-    minStock: 50,
-    maxStock: 300,
-    unitCost: 3,
-    lastUpdated: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    fireRate: 5.6,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's6',
-    name: 'Domates',
-    category: 'sebze',
-    unit: 'kg',
-    currentStock: 8,
-    theoreticalStock: 10,
-    minStock: 5,
-    maxStock: 30,
-    unitCost: 35,
-    lastUpdated: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-    fireRate: 20,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's7',
-    name: 'Sogan',
-    category: 'sebze',
-    unit: 'kg',
-    currentStock: 6,
-    theoreticalStock: 7,
-    minStock: 3,
-    maxStock: 20,
-    unitCost: 25,
-    lastUpdated: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-    fireRate: 14.3,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's8',
-    name: 'Sumak',
-    category: 'baharat',
-    unit: 'kg',
-    currentStock: 0.8,
-    theoreticalStock: 1,
-    minStock: 0.5,
-    maxStock: 5,
-    unitCost: 120,
-    lastUpdated: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-    fireRate: 20,
-    isLow: false,
-    isCritical: false,
-  },
-  {
-    id: 's9',
-    name: 'Paket Kutusu (Buyuk)',
-    category: 'ambalaj',
-    unit: 'adet',
-    currentStock: 120,
-    theoreticalStock: 125,
-    minStock: 100,
-    maxStock: 500,
-    unitCost: 5,
-    lastUpdated: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-    fireRate: 4,
-    isLow: false,
-    isCritical: false,
-  },
-];
-
-// Mock stock movements
-const mockMovements: StockMovement[] = [
-  {
-    id: 'm1',
-    itemId: 's1',
-    itemName: 'Dana Eti (Doner)',
-    type: 'out',
-    quantity: 3,
-    previousStock: 8,
-    newStock: 5,
-    reason: 'Gunluk tuketim',
-    userId: 'u1',
-    userName: 'Ahmet Yilmaz',
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'm2',
-    itemId: 's3',
-    itemName: 'Ayran',
-    type: 'out',
-    quantity: 5,
-    previousStock: 20,
-    newStock: 15,
-    reason: 'Siparis teslimati',
-    userId: 'u1',
-    userName: 'Ahmet Yilmaz',
-    createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'm3',
-    itemId: 's4',
-    itemName: 'Cola 330ml',
-    type: 'in',
-    quantity: 24,
-    previousStock: 26,
-    newStock: 50,
-    reason: 'Tedarikci teslimati',
-    userId: 'u2',
-    userName: 'Mehmet Demir',
-    createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'm4',
-    itemId: 's5',
-    itemName: 'Lavash Ekmek',
-    type: 'waste',
-    quantity: 5,
-    previousStock: 90,
-    newStock: 85,
-    reason: 'Bayat urunler',
-    userId: 'u1',
-    userName: 'Ahmet Yilmaz',
-    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-  },
-];
 
 // Movement type config
 const MOVEMENT_TYPE_CONFIG = {
@@ -281,16 +87,38 @@ export default function StockPage() {
         if (selectedCategory !== 'all') params.category = selectedCategory;
         if (showLowOnly) params.isLow = true;
         if (showCriticalOnly) params.isCritical = true;
-        const response = await api.get<StockResponse>('/stock', { params });
-        return response.data;
-      } catch {
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get('/stock', { params });
+        const data = response.data || {};
+
+        // Map API response to frontend format
+        const itemsArr = data.items || data || [];
+        const items: StockItem[] = Array.isArray(itemsArr) ? itemsArr.map((item: Record<string, unknown>) => ({
+          id: String(item.id || ''),
+          name: String((item.ingredient as { name?: string })?.name || item.name || ''),
+          category: String(item.category || 'diger').toLowerCase() as StockCategory,
+          unit: String(item.unit || 'adet').toLowerCase() as StockItem['unit'],
+          currentStock: parseFloat(String(item.currentStock || 0)),
+          theoreticalStock: parseFloat(String(item.theoreticalStock || 0)),
+          minStock: parseFloat(String(item.minStock || 0)),
+          maxStock: parseFloat(String(item.maxStock || 100)),
+          unitCost: parseFloat(String((item.ingredient as { unitCost?: number })?.unitCost || item.unitCost || 0)),
+          lastUpdated: String(item.lastUpdated || item.updatedAt || new Date().toISOString()),
+          fireRate: parseFloat(String(item.fireRate || 0)),
+          isLow: Boolean(item.isLow || (parseFloat(String(item.currentStock || 0)) <= parseFloat(String(item.minStock || 0)))),
+          isCritical: Boolean(item.isCritical || (parseFloat(String(item.currentStock || 0)) <= parseFloat(String(item.minStock || 0)) * 0.5)),
+        })) : [];
+
         return {
-          items: mockStockItems,
-          total: mockStockItems.length,
-          page: 1,
-          limit: 50,
-          totalPages: 1,
+          items,
+          total: data.total || items.length,
+          page: data.page || 1,
+          limit: data.limit || 50,
+          totalPages: data.totalPages || 1,
         };
+      } catch {
+        return { items: [], total: 0, page: 1, limit: 50, totalPages: 1 };
       }
     },
   });
@@ -299,19 +127,37 @@ export default function StockPage() {
   const { data: movementsData } = useQuery<StockMovement[]>({
     queryKey: ['stock-movements', selectedItem?.id],
     queryFn: async () => {
-      if (!selectedItem) return mockMovements;
+      if (!selectedItem) return [];
+
       try {
-        const response = await api.get<StockMovement[]>(`/stock/${selectedItem.id}/movements`);
-        return response.data;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get(`/stock/${selectedItem.id}/movements`);
+        const data = response.data || [];
+        if (!Array.isArray(data)) return [];
+
+        // Map API response to frontend format
+        return data.map((m: Record<string, unknown>) => ({
+          id: String(m.id || ''),
+          itemId: String(m.stockItemId || m.itemId || ''),
+          itemName: String((m.stockItem as { ingredient?: { name?: string } })?.ingredient?.name || m.itemName || ''),
+          type: String(m.type || 'out').toLowerCase() as StockMovement['type'],
+          quantity: parseFloat(String(m.quantity || 0)),
+          previousStock: parseFloat(String(m.previousStock || 0)),
+          newStock: parseFloat(String(m.newStock || 0)),
+          reason: m.reason ? String(m.reason) : undefined,
+          userId: String((m.user as { id?: string })?.id || m.userId || ''),
+          userName: String((m.user as { name?: string })?.name || m.userName || ''),
+          createdAt: String(m.createdAt || new Date().toISOString()),
+        }));
       } catch {
-        return mockMovements.filter(m => m.itemId === selectedItem.id);
+        return [];
       }
     },
     enabled: !!selectedItem || showMovements,
   });
 
-  const stockItems = stockData?.items || mockStockItems;
-  const movements = movementsData || mockMovements;
+  const stockItems = stockData?.items || [];
+  const movements = movementsData || [];
 
   // Filter and sort items
   const filteredItems = useMemo(() => {

@@ -192,10 +192,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       },
       reconnectionAttempts,
       reconnectionDelay,
-      reconnectionDelayMax: 10000,
+      reconnectionDelayMax: 5000,
       transports: ['websocket', 'polling'],
-      timeout: 20000,
+      timeout: 10000, // Reduced from 20s to 10s for faster initial connection
       forceNew: false,
+      upgrade: true, // Enable upgrade from polling to websocket
     });
 
     // Connection events

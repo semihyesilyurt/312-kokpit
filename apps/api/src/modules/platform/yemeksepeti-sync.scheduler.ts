@@ -1,7 +1,10 @@
 /**
- * Trendyol GO Yemek Sync Scheduler
- * High-frequency order polling (every 10 seconds) specifically for Trendyol platform
- * Handles JWT token refresh and real-time order synchronization
+ * Yemeksepeti Partner Portal Sync Scheduler
+ * High-frequency order polling (every 10 seconds) specifically for Yemeksepeti platform
+ * Handles session persistence and real-time order synchronization
+ *
+ * Note: Yemeksepeti uses PerimeterX bot protection, so initial login must be done
+ * via Playwright script: node /www/wwwroot/312/scr/yemeksepeti/hybrid-login.js
  */
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -10,19 +13,19 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Platform, Prisma } from '@prisma/client';
-import { TrendyolAdapter } from './adapters/trendyol.adapter';
+import { YemeksepetiAdapter } from './adapters/yemeksepeti.adapter';
 import { OrderService } from '@modules/order/order.service';
 import { OrderGateway } from '@modules/order/order.gateway';
 import { PlatformOrder } from './adapters/platform-adapter.interface';
 
 /**
- * Trendyol commission rate (20%)
+ * Yemeksepeti commission rate (35%)
  */
-const TRENDYOL_COMMISSION_RATE = 20;
+const YEMEKSEPETI_COMMISSION_RATE = 35;
 
 @Injectable()
-export class TrendyolSyncScheduler implements OnModuleInit {
-  private readonly logger = new Logger(TrendyolSyncScheduler.name);
+export class YemeksepetiSyncScheduler implements OnModuleInit {
+  private readonly logger = new Logger(YemeksepetiSyncScheduler.name);
   private isSyncing = false;
   private isEnabled = false;
   private syncCount = 0;
@@ -36,7 +39,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly trendyolAdapter: TrendyolAdapter,
+    private readonly yemeksepetiAdapter: YemeksepetiAdapter,
     private readonly orderService: OrderService,
     private readonly orderGateway: OrderGateway,
     @InjectQueue('platform-sync') private readonly syncQueue: Queue,
@@ -46,47 +49,47 @@ export class TrendyolSyncScheduler implements OnModuleInit {
    * Initialize scheduler on module start
    */
   async onModuleInit() {
-    await this.checkTrendyolEnabled();
-    this.logger.log(`Trendyol sync scheduler initialized. Enabled: ${this.isEnabled}`);
+    await this.checkYemeksepetiEnabled();
+    this.logger.log(`Yemeksepeti sync scheduler initialized. Enabled: ${this.isEnabled}`);
   }
 
   /**
-   * Check if Trendyol platform is enabled and has valid credentials
+   * Check if Yemeksepeti platform is enabled and has valid credentials
    */
-  private async checkTrendyolEnabled(): Promise<boolean> {
+  private async checkYemeksepetiEnabled(): Promise<boolean> {
     try {
       const config = await this.prisma.platformConfig.findUnique({
-        where: { platform: Platform.TRENDYOL },
+        where: { platform: Platform.YEMEKSEPETI },
       });
 
       this.isEnabled = !!(config?.isActive && config?.accessToken);
 
       if (!this.isEnabled) {
-        this.logger.debug('Trendyol platform is not active or missing credentials');
+        this.logger.debug('Yemeksepeti platform is not active or missing credentials');
       }
 
       return this.isEnabled;
     } catch (error) {
-      this.logger.error(`Error checking Trendyol status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Error checking Yemeksepeti status: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     }
   }
 
   /**
-   * High-frequency Trendyol order sync - every 10 seconds
+   * High-frequency Yemeksepeti order sync - every 10 seconds
    * This ensures near real-time order visibility
    */
   @Cron('*/10 * * * * *') // Every 10 seconds
-  async syncTrendyolOrders() {
+  async syncYemeksepetiOrders() {
     // Skip if already syncing or disabled
     if (this.isSyncing) {
-      this.logger.debug('Trendyol sync already in progress, skipping...');
+      this.logger.debug('Yemeksepeti sync already in progress, skipping...');
       return;
     }
 
-    // Re-check if Trendyol is enabled periodically (every 5 minutes = 30 * 10 seconds)
+    // Re-check if Yemeksepeti is enabled periodically (every 5 minutes = 30 * 10 seconds)
     if (this.syncCount % 30 === 0) {
-      await this.checkTrendyolEnabled();
+      await this.checkYemeksepetiEnabled();
     }
 
     if (!this.isEnabled) {
@@ -95,12 +98,12 @@ export class TrendyolSyncScheduler implements OnModuleInit {
 
     // Circuit breaker: Stop syncing after too many consecutive errors
     if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-      this.logger.warn(`Trendyol sync paused due to ${this.consecutiveErrors} consecutive errors. Will retry in 5 minutes.`);
+      this.logger.warn(`Yemeksepeti sync paused due to ${this.consecutiveErrors} consecutive errors. Will retry in 5 minutes.`);
 
       // Reset after 5 minutes (30 cycles of 10 seconds)
       if (this.syncCount % 30 === 0) {
         this.consecutiveErrors = 0;
-        this.logger.log('Trendyol sync circuit breaker reset');
+        this.logger.log('Yemeksepeti sync circuit breaker reset');
       }
       return;
     }
@@ -110,13 +113,13 @@ export class TrendyolSyncScheduler implements OnModuleInit {
     const startTime = Date.now();
 
     try {
-      this.logger.debug(`Starting Trendyol order sync #${this.syncCount}`);
+      this.logger.debug(`Starting Yemeksepeti order sync #${this.syncCount}`);
 
-      // Fetch orders from Trendyol
-      const platformOrders = await this.trendyolAdapter.fetchOrders();
+      // Fetch orders from Yemeksepeti
+      const platformOrders = await this.yemeksepetiAdapter.fetchOrders();
 
       if (platformOrders.length === 0) {
-        this.logger.debug('No active orders from Trendyol');
+        this.logger.debug('No active orders from Yemeksepeti');
         this.consecutiveErrors = 0; // Reset on success
         this.lastSyncTime = new Date();
         return;
@@ -136,29 +139,25 @@ export class TrendyolSyncScheduler implements OnModuleInit {
           }
         } catch (error) {
           this.logger.error(
-            `Error processing Trendyol order ${platformOrder.platformOrderId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            `Error processing Yemeksepeti order ${platformOrder.platformOrderId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
           );
         }
       }
-
-      // Check for delivered orders (orders that disappeared from Trendyol active list)
-      const deliveredCount = await this.checkDeliveredOrders(platformOrders);
 
       // Log sync result
       const duration = Date.now() - startTime;
       this.consecutiveErrors = 0; // Reset on success
       this.lastSyncTime = new Date();
 
-      if (ordersCreated > 0 || ordersUpdated > 0 || deliveredCount > 0) {
+      if (ordersCreated > 0 || ordersUpdated > 0) {
         this.logger.log(
-          `Trendyol sync #${this.syncCount} completed in ${duration}ms: ${ordersCreated} created, ${ordersUpdated} updated, ${deliveredCount} delivered`,
+          `Yemeksepeti sync #${this.syncCount} completed in ${duration}ms: ${ordersCreated} created, ${ordersUpdated} updated`,
         );
 
         // Log to database
         await this.logSyncAction(true, {
           ordersCreated,
           ordersUpdated,
-          ordersDelivered: deliveredCount,
           totalFetched: platformOrders.length,
           duration,
         });
@@ -173,7 +172,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
       this.consecutiveErrors++;
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
 
-      this.logger.error(`Trendyol sync #${this.syncCount} failed: ${errorMsg}`);
+      this.logger.error(`Yemeksepeti sync #${this.syncCount} failed: ${errorMsg}`);
 
       // Log failure to database
       await this.logSyncAction(false, {
@@ -181,29 +180,31 @@ export class TrendyolSyncScheduler implements OnModuleInit {
         duration: Date.now() - startTime,
       });
 
-      // If authentication error, disable until re-authenticated
-      if (errorMsg.includes('Authentication failed') || errorMsg.includes('401')) {
+      // If authentication error, trigger automatic re-login
+      if (errorMsg.includes('Authentication failed') || errorMsg.includes('401') || errorMsg.includes('403') || errorMsg.includes('token expired')) {
         this.isEnabled = false;
-        this.logger.warn('Trendyol sync disabled due to authentication failure. Manual login required.');
+        this.logger.warn('Yemeksepeti sync disabled due to authentication failure. Triggering automatic re-login...');
 
         await this.prisma.platformConfig.update({
-          where: { platform: Platform.TRENDYOL },
+          where: { platform: Platform.YEMEKSEPETI },
           data: {
             syncStatus: 'auth_failed',
-            syncError: 'JWT token expired. Automatic re-login will be attempted.',
+            syncError: 'Session expired. Automatic re-login in progress...',
           },
         });
 
-        // Try to re-login automatically
+        // Trigger automatic re-login after 30 seconds
         setTimeout(async () => {
-          this.logger.log('Attempting automatic Trendyol re-login...');
-          const success = await this.trendyolAdapter.performAutomaticLogin();
+          this.logger.log('Attempting automatic Yemeksepeti re-login...');
+          const success = await this.yemeksepetiAdapter.performAutomaticLogin();
           if (success) {
             this.isEnabled = true;
             this.consecutiveErrors = 0;
-            this.logger.log('Trendyol automatic re-login successful');
+            this.logger.log('Yemeksepeti automatic re-login successful');
+          } else {
+            this.logger.error('Yemeksepeti automatic re-login failed');
           }
-        }, 30000); // Wait 30 seconds before retry
+        }, 30000);
       }
     } finally {
       this.isSyncing = false;
@@ -211,17 +212,22 @@ export class TrendyolSyncScheduler implements OnModuleInit {
   }
 
   /**
-   * Process a single order from Trendyol
+   * Process a single order from Yemeksepeti
    * Returns 'created', 'updated', or 'skipped'
    * - New orders: Create in DB
    * - Existing orders: Sync status from platform to DB (except DELIVERED/CANCELLED)
    */
   private async processOrder(platformOrder: PlatformOrder): Promise<'created' | 'updated' | 'skipped'> {
+    // Check if already processed in this session
+    if (this.processedOrderIds.has(platformOrder.platformOrderId)) {
+      return 'skipped';
+    }
+
     // Check if order already exists in database
     const existingOrder = await this.prisma.order.findFirst({
       where: {
         platformOrderId: platformOrder.platformOrderId,
-        platform: Platform.TRENDYOL,
+        platform: Platform.YEMEKSEPETI,
       },
       select: {
         id: true,
@@ -250,9 +256,6 @@ export class TrendyolSyncScheduler implements OnModuleInit {
       // Sync status from platform if not in final state
       if (!finalStatuses.includes(existingOrder.status)) {
         const platformStatus = platformOrder.platformStatus;
-        this.logger.debug(
-          `Order ${existingOrder.orderNumber}: DB=${existingOrder.status}, Platform=${platformStatus}`,
-        );
         if (platformStatus && platformStatus !== existingOrder.status) {
           // Update DB status to match platform status
           await this.prisma.order.update({
@@ -266,7 +269,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
               orderId: existingOrder.id,
               fromStatus: existingOrder.status,
               toStatus: platformStatus,
-              note: 'Status synced from Trendyol platform',
+              note: 'Status synced from Yemeksepeti platform',
             },
           });
 
@@ -279,27 +282,22 @@ export class TrendyolSyncScheduler implements OnModuleInit {
           );
 
           this.logger.log(
-            `Trendyol order ${existingOrder.orderNumber} status updated: ${existingOrder.status} → ${platformStatus}`,
+            `Yemeksepeti order ${existingOrder.orderNumber} status updated: ${existingOrder.status} → ${platformStatus}`,
           );
 
           updated = true;
         }
       }
 
-      // Don't add to processedOrderIds for existing orders - allow continuous status sync
+      this.processedOrderIds.add(platformOrder.platformOrderId);
       return updated ? 'updated' : 'skipped';
     }
 
-    // Check if already being created in this sync cycle (prevent race condition duplicates)
-    if (this.processedOrderIds.has(platformOrder.platformOrderId)) {
-      return 'skipped';
-    }
-
-    // Mark as being processed BEFORE creating to prevent duplicates
-    this.processedOrderIds.add(platformOrder.platformOrderId);
-
     // Create new order
     const order = await this.createOrder(platformOrder);
+
+    // Mark as processed
+    this.processedOrderIds.add(platformOrder.platformOrderId);
 
     // Emit real-time notification
     this.orderGateway.emitNewOrder(String(order.branchId), {
@@ -316,78 +314,13 @@ export class TrendyolSyncScheduler implements OnModuleInit {
       })),
     });
 
-    this.logger.log(`🔔 New Trendyol order created: ${order.orderNumber} (Platform ID: ${platformOrder.platformOrderId})`);
+    this.logger.log(`🔔 New Yemeksepeti order created: ${order.orderNumber} (Platform ID: ${platformOrder.platformOrderId})`);
 
     return 'created';
   }
 
   /**
-   * Check for delivered orders
-   * Orders that are ON_DELIVERY in DB but no longer in Trendyol active list are considered delivered
-   */
-  private async checkDeliveredOrders(platformOrders: PlatformOrder[]): Promise<number> {
-    // Get all active platform order IDs from current sync
-    const activePlatformOrderIds = new Set(platformOrders.map(o => o.platformOrderId));
-
-    // Find DB orders that are active but not in platform list (they've been delivered)
-    const potentiallyDelivered = await this.prisma.order.findMany({
-      where: {
-        platform: Platform.TRENDYOL,
-        status: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'ON_DELIVERY'] },
-        // Only check orders created in the last 24 hours
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-      select: {
-        id: true,
-        orderNumber: true,
-        platformOrderId: true,
-        status: true,
-        branchId: true,
-      },
-    });
-
-    let deliveredCount = 0;
-
-    for (const order of potentiallyDelivered) {
-      // If order is not in active list, it's been delivered (or cancelled)
-      if (order.platformOrderId && !activePlatformOrderIds.has(order.platformOrderId)) {
-        // Update to DELIVERED
-        await this.prisma.order.update({
-          where: { id: order.id },
-          data: {
-            status: 'DELIVERED',
-            deliveredAt: new Date(),
-          },
-        });
-
-        // Create status history
-        await this.prisma.orderStatusHistory.create({
-          data: {
-            orderId: order.id,
-            fromStatus: order.status,
-            toStatus: 'DELIVERED',
-            note: 'Order delivered (no longer in Trendyol active list)',
-          },
-        });
-
-        // Emit WebSocket update
-        this.orderGateway.emitOrderStatusChanged(
-          String(order.branchId),
-          order.id,
-          'DELIVERED',
-          order.status,
-        );
-
-        this.logger.log(`Trendyol order ${order.orderNumber} marked as DELIVERED (disappeared from active list)`);
-        deliveredCount++;
-      }
-    }
-
-    return deliveredCount;
-  }
-
-  /**
-   * Create order from Trendyol platform order
+   * Create order from Yemeksepeti platform order
    */
   private async createOrder(platformOrder: PlatformOrder) {
     // Generate order number
@@ -410,7 +343,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
           defaultLongitude: platformOrder.customer.longitude
             ? new Prisma.Decimal(platformOrder.customer.longitude)
             : null,
-          firstOrderPlatform: Platform.TRENDYOL,
+          firstOrderPlatform: Platform.YEMEKSEPETI,
           isDirectCustomer: false,
           firstOrderAt: new Date(),
           status: 'ACTIVE',
@@ -467,9 +400,9 @@ export class TrendyolSyncScheduler implements OnModuleInit {
     const safeDiscount = platformOrder.discount ?? 0;
     const safeDeliveryFee = platformOrder.deliveryFee ?? 0;
 
-    // Calculate commission (Trendyol ~20%)
+    // Calculate commission (Yemeksepeti ~35%)
     const platformCommission = Number(
-      ((safeSubtotal * TRENDYOL_COMMISSION_RATE) / 100).toFixed(2),
+      ((safeSubtotal * YEMEKSEPETI_COMMISSION_RATE) / 100).toFixed(2),
     );
     const netAmount = safeTotalAmount - platformCommission;
 
@@ -495,7 +428,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
     const order = await this.prisma.order.create({
       data: {
         orderNumber,
-        platform: Platform.TRENDYOL,
+        platform: Platform.YEMEKSEPETI,
         platformOrderId: platformOrder.platformOrderId,
         platformDisplayId: platformOrder.platformDisplayId,
         status: 'PENDING',
@@ -517,7 +450,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
         totalAmount: new Prisma.Decimal(safeTotalAmount),
         netAmount: new Prisma.Decimal(netAmount),
         paymentMethod: platformOrder.paymentMethod,
-        paymentStatus: platformOrder.paymentMethod !== 'CASH' ? 'PAID' : 'PENDING', // Trendyol: online card = PAID
+        paymentStatus: platformOrder.paymentMethod === 'ONLINE' ? 'PAID' : 'PENDING',
         branchId: branch.id,
         estimatedDelivery,
         items: {
@@ -537,7 +470,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
         orderId: order.id,
         fromStatus: null,
         toStatus: 'PENDING',
-        note: 'Order imported from Trendyol GO Yemek',
+        note: 'Order imported from Yemeksepeti Partner Portal',
       },
     });
 
@@ -562,7 +495,6 @@ export class TrendyolSyncScheduler implements OnModuleInit {
     data: {
       ordersCreated?: number;
       ordersUpdated?: number;
-      ordersDelivered?: number;
       totalFetched?: number;
       duration?: number;
       errorMessage?: string;
@@ -571,7 +503,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
     try {
       await this.prisma.platformSyncLog.create({
         data: {
-          platform: Platform.TRENDYOL,
+          platform: Platform.YEMEKSEPETI,
           action: 'sync_orders_10s',
           status: success ? 'success' : 'failed',
           responseData: {
@@ -588,7 +520,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
       // Update last sync timestamp
       if (success) {
         await this.prisma.platformConfig.update({
-          where: { platform: Platform.TRENDYOL },
+          where: { platform: Platform.YEMEKSEPETI },
           data: {
             lastSyncAt: new Date(),
             syncStatus: 'success',
@@ -602,23 +534,23 @@ export class TrendyolSyncScheduler implements OnModuleInit {
   }
 
   /**
-   * Token refresh check - runs every hour
+   * Session refresh check - runs every hour
    * Proactively refreshes token before expiration via automatic login
    */
   @Cron('0 0 * * * *') // Every hour at minute 0
-  async checkTokenRefresh() {
+  async checkSessionRefresh() {
     try {
-      this.logger.debug('Checking Trendyol token status...');
+      this.logger.debug('Checking Yemeksepeti session status...');
 
       const config = await this.prisma.platformConfig.findUnique({
-        where: { platform: Platform.TRENDYOL },
+        where: { platform: Platform.YEMEKSEPETI },
       });
 
-      // If no token or config, attempt login
+      // If no token or config, trigger automatic login
       if (!config?.accessToken) {
-        this.logger.log('No Trendyol token found, initiating automatic login...');
-        await this.trendyolAdapter.performAutomaticLogin();
-        await this.checkTrendyolEnabled();
+        this.logger.log('No Yemeksepeti token found, triggering automatic login...');
+        await this.yemeksepetiAdapter.performAutomaticLogin();
+        await this.checkYemeksepetiEnabled();
         return;
       }
 
@@ -627,27 +559,32 @@ export class TrendyolSyncScheduler implements OnModuleInit {
         const thirtyMinutesFromNow = new Date(Date.now() + 30 * 60 * 1000);
 
         if (config.tokenExpiresAt < thirtyMinutesFromNow) {
-          this.logger.log('Trendyol token expiring soon, triggering proactive login...');
+          this.logger.log('Yemeksepeti token expiring soon, triggering proactive re-login...');
 
-          await this.trendyolAdapter.performAutomaticLogin();
-          await this.checkTrendyolEnabled();
+          const success = await this.yemeksepetiAdapter.performAutomaticLogin();
+          await this.checkYemeksepetiEnabled();
 
-          this.logger.log('Trendyol token refresh completed');
+          if (success) {
+            this.logger.log('Yemeksepeti proactive re-login successful');
+          } else {
+            this.logger.warn('Yemeksepeti proactive re-login failed, will retry on next sync error');
+          }
         } else {
           const remainingMinutes = Math.round((config.tokenExpiresAt.getTime() - Date.now()) / 60000);
-          this.logger.debug(`Trendyol token valid for ${remainingMinutes} more minutes`);
+          this.logger.debug(`Yemeksepeti token valid for ${remainingMinutes} more minutes`);
         }
       }
     } catch (error) {
-      this.logger.error(`Token refresh check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Session refresh check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Initial login on startup if needed - runs 45 seconds after module init
+   * Initial session load on startup - runs 50 seconds after module init
+   * Triggers automatic login if no valid session exists
    */
-  @Cron('45 * * * * *', { name: 'trendyol-initial-login' }) // At second 45 of every minute
-  async initialLoginCheck() {
+  @Cron('50 * * * * *', { name: 'yemeksepeti-initial-session-load' }) // At second 50 of every minute
+  async initialSessionLoad() {
     // Only run once at startup
     if (this.syncCount > 0) {
       return;
@@ -655,16 +592,20 @@ export class TrendyolSyncScheduler implements OnModuleInit {
 
     try {
       const config = await this.prisma.platformConfig.findUnique({
-        where: { platform: Platform.TRENDYOL },
+        where: { platform: Platform.YEMEKSEPETI },
       });
 
       if (!config?.accessToken || !config?.tokenExpiresAt || config.tokenExpiresAt < new Date()) {
-        this.logger.log('Trendyol: Performing initial login...');
-        await this.trendyolAdapter.performAutomaticLogin();
-        await this.checkTrendyolEnabled();
+        this.logger.log('Yemeksepeti: No valid session, triggering automatic login...');
+        await this.yemeksepetiAdapter.performAutomaticLogin();
+        await this.checkYemeksepetiEnabled();
+      } else {
+        // Session exists, just load it
+        await this.yemeksepetiAdapter.checkAndRefreshLogin();
+        await this.checkYemeksepetiEnabled();
       }
     } catch (error) {
-      this.logger.error(`Initial login check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Initial session load failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -688,7 +629,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
   async forceEnable(): Promise<void> {
     this.isEnabled = true;
     this.consecutiveErrors = 0;
-    this.logger.log('Trendyol sync force-enabled');
+    this.logger.log('Yemeksepeti sync force-enabled');
   }
 
   /**
@@ -696,7 +637,7 @@ export class TrendyolSyncScheduler implements OnModuleInit {
    */
   forceDisable(): void {
     this.isEnabled = false;
-    this.logger.log('Trendyol sync force-disabled');
+    this.logger.log('Yemeksepeti sync force-disabled');
   }
 
   /**
@@ -707,12 +648,36 @@ export class TrendyolSyncScheduler implements OnModuleInit {
       return { success: false, message: 'Sync already in progress' };
     }
 
-    this.logger.log('Triggering manual Trendyol sync...');
-    await this.syncTrendyolOrders();
+    this.logger.log('Triggering manual Yemeksepeti sync...');
+    await this.syncYemeksepetiOrders();
 
     return {
       success: true,
       message: `Manual sync completed. ${this.processedOrderIds.size} orders processed in this session.`,
+    };
+  }
+
+  /**
+   * Trigger automatic Playwright login with Xvfb
+   */
+  async triggerPlaywrightLogin(): Promise<{ success: boolean; message: string }> {
+    this.logger.log('Triggering automatic Yemeksepeti login with Xvfb...');
+
+    const success = await this.yemeksepetiAdapter.performAutomaticLogin();
+
+    if (success) {
+      this.isEnabled = true;
+      this.consecutiveErrors = 0;
+      await this.checkYemeksepetiEnabled();
+      return {
+        success: true,
+        message: 'Yemeksepeti automatic login completed successfully',
+      };
+    }
+
+    return {
+      success: false,
+      message: 'Yemeksepeti automatic login failed. Check logs for details.',
     };
   }
 }

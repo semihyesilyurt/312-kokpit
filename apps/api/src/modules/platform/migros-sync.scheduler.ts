@@ -137,20 +137,24 @@ export class MigrosSyncScheduler implements OnModuleInit {
         }
       }
 
+      // Check for delivered orders (orders that disappeared from Migros active list)
+      const deliveredCount = await this.checkDeliveredOrders(platformOrders);
+
       // Log sync result
       const duration = Date.now() - startTime;
       this.consecutiveErrors = 0; // Reset on success
       this.lastSyncTime = new Date();
 
-      if (ordersCreated > 0 || ordersUpdated > 0) {
+      if (ordersCreated > 0 || ordersUpdated > 0 || deliveredCount > 0) {
         this.logger.log(
-          `Migros sync #${this.syncCount} completed in ${duration}ms: ${ordersCreated} created, ${ordersUpdated} updated`,
+          `Migros sync #${this.syncCount} completed in ${duration}ms: ${ordersCreated} created, ${ordersUpdated} updated, ${deliveredCount} delivered`,
         );
 
         // Log to database
         await this.logSyncAction(true, {
           ordersCreated,
           ordersUpdated,
+          ordersDelivered: deliveredCount,
           totalFetched: platformOrders.length,
           duration,
         });
@@ -188,6 +192,8 @@ export class MigrosSyncScheduler implements OnModuleInit {
   /**
    * Process a single order from Migros
    * Returns 'created', 'updated', or 'skipped'
+   * - New orders: Create in DB + auto-accept on Migros
+   * - Existing orders: Sync status from platform to DB (except DELIVERED/CANCELLED)
    */
   private async processOrder(platformOrder: PlatformOrder): Promise<'created' | 'updated' | 'skipped'> {
     // Check if order already exists
@@ -199,13 +205,92 @@ export class MigrosSyncScheduler implements OnModuleInit {
     });
 
     if (existingOrder) {
-      // Order exists - check if we need to update anything
-      // For now, just skip existing orders (status updates come from the restaurant)
+      // Order exists - sync status from platform if not in final state
+      const finalStatuses = ['DELIVERED', 'CANCELLED'];
+
+      if (finalStatuses.includes(existingOrder.status)) {
+        return 'skipped';
+      }
+
+      // Check if platform status is different from DB status
+      const platformStatus = platformOrder.platformStatus;
+      this.logger.debug(
+        `Migros order ${existingOrder.orderNumber}: DB=${existingOrder.status}, Platform=${platformStatus}`,
+      );
+      if (platformStatus && platformStatus !== existingOrder.status) {
+        // Update DB status to match platform status
+        await this.prisma.order.update({
+          where: { id: existingOrder.id },
+          data: { status: platformStatus },
+        });
+
+        // Create status history entry
+        await this.prisma.orderStatusHistory.create({
+          data: {
+            orderId: existingOrder.id,
+            fromStatus: existingOrder.status,
+            toStatus: platformStatus,
+            note: `Status synced from Migros platform`,
+          },
+        });
+
+        // Emit status update via WebSocket for Kanban
+        this.orderGateway.emitOrderStatusChanged(
+          String(existingOrder.branchId),
+          existingOrder.id,
+          platformStatus,
+          existingOrder.status,
+        );
+
+        this.logger.log(
+          `Migros order ${existingOrder.orderNumber} status updated: ${existingOrder.status} → ${platformStatus}`,
+        );
+
+        return 'updated';
+      }
+
       return 'skipped';
     }
 
     // Create new order
     const order = await this.createOrder(platformOrder);
+
+    // Auto-accept order on Migros platform (25 min preparation time)
+    try {
+      const accepted = await this.migrosAdapter.acceptOrder(
+        platformOrder.platformOrderId,
+        25, // Default 25 minutes preparation time
+      );
+
+      if (accepted) {
+        this.logger.log(`Migros order ${order.orderNumber} auto-accepted on platform`);
+
+        // Update order status to CONFIRMED after acceptance
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: { status: 'CONFIRMED' },
+        });
+
+        // Create status history for acceptance
+        await this.prisma.orderStatusHistory.create({
+          data: {
+            orderId: order.id,
+            fromStatus: 'PENDING',
+            toStatus: 'CONFIRMED',
+            note: 'Order auto-accepted on Migros platform',
+          },
+        });
+
+        // Update order object for WebSocket emission
+        order.status = 'CONFIRMED';
+      } else {
+        this.logger.warn(`Failed to auto-accept Migros order ${order.orderNumber} on platform`);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error auto-accepting Migros order ${order.orderNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
 
     // Emit real-time notification
     this.orderGateway.emitNewOrder(String(order.branchId), {
@@ -225,6 +310,71 @@ export class MigrosSyncScheduler implements OnModuleInit {
     this.logger.log(`New Migros order created: ${order.orderNumber} (Platform ID: ${platformOrder.platformOrderId})`);
 
     return 'created';
+  }
+
+  /**
+   * Check for delivered orders
+   * Orders that are in active states in DB but no longer in Migros active list are considered delivered
+   */
+  private async checkDeliveredOrders(platformOrders: PlatformOrder[]): Promise<number> {
+    // Get all active platform order IDs from current sync
+    const activePlatformOrderIds = new Set(platformOrders.map(o => o.platformOrderId));
+
+    // Find DB orders that are in active states but not in Migros active list
+    const potentiallyDelivered = await this.prisma.order.findMany({
+      where: {
+        platform: Platform.MIGROS,
+        status: { in: ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'ON_DELIVERY'] },
+        // Only check orders created in the last 24 hours
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        platformOrderId: true,
+        status: true,
+        branchId: true,
+      },
+    });
+
+    let deliveredCount = 0;
+
+    for (const order of potentiallyDelivered) {
+      // If order is not in active list, it's been delivered (or cancelled)
+      if (order.platformOrderId && !activePlatformOrderIds.has(order.platformOrderId)) {
+        // Update to DELIVERED
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'DELIVERED',
+            deliveredAt: new Date(),
+          },
+        });
+
+        // Create status history
+        await this.prisma.orderStatusHistory.create({
+          data: {
+            orderId: order.id,
+            fromStatus: order.status,
+            toStatus: 'DELIVERED',
+            note: 'Order delivered (no longer in Migros active list)',
+          },
+        });
+
+        // Emit WebSocket update
+        this.orderGateway.emitOrderStatusChanged(
+          String(order.branchId),
+          order.id,
+          'DELIVERED',
+          order.status,
+        );
+
+        this.logger.log(`Migros order ${order.orderNumber} marked as DELIVERED (disappeared from active list)`);
+        deliveredCount++;
+      }
+    }
+
+    return deliveredCount;
   }
 
   /**
@@ -329,6 +479,7 @@ export class MigrosSyncScheduler implements OnModuleInit {
         orderNumber,
         platform: Platform.MIGROS,
         platformOrderId: platformOrder.platformOrderId,
+        platformDisplayId: platformOrder.platformDisplayId,
         status: 'PENDING',
         customerId: customer.id,
         customerName: platformOrder.customer.name,
@@ -393,6 +544,7 @@ export class MigrosSyncScheduler implements OnModuleInit {
     data: {
       ordersCreated?: number;
       ordersUpdated?: number;
+      ordersDelivered?: number;
       totalFetched?: number;
       duration?: number;
       errorMessage?: string;

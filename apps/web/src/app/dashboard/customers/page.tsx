@@ -30,91 +30,29 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: str
   vip: { label: 'VIP', color: 'text-purple-500', bgColor: 'bg-purple-500/10' },
 };
 
-// Mock customer data
-const mockCustomers = [
-  {
-    id: '1',
-    name: 'Ahmet Yilmaz',
-    phone: '5321234567',
-    email: 'ahmet@email.com',
-    address: 'Kizilay Mah. Ataturk Cad. No:15',
-    status: 'vip',
-    totalOrders: 45,
-    totalSpent: 4250,
-    averageOrder: 94.44,
-    lastOrderAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    firstOrderAt: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString(),
-    loyaltyPoints: 425,
-    platform: 'yemeksepeti',
-  },
-  {
-    id: '2',
-    name: 'Mehmet Demir',
-    phone: '5329876543',
-    email: null,
-    address: 'Cankaya Mah. Sok:8/A',
-    status: 'active',
-    totalOrders: 12,
-    totalSpent: 1560,
-    averageOrder: 130,
-    lastOrderAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    firstOrderAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
-    loyaltyPoints: 156,
-    platform: 'getir',
-  },
-  {
-    id: '3',
-    name: 'Ayse Kaya',
-    phone: '5335551234',
-    email: 'ayse.kaya@email.com',
-    address: 'Bahcelievler Mah. Cad:22',
-    status: 'sleeping',
-    totalOrders: 8,
-    totalSpent: 720,
-    averageOrder: 90,
-    lastOrderAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
-    firstOrderAt: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString(),
-    loyaltyPoints: 72,
-    platform: 'phone',
-  },
-  {
-    id: '4',
-    name: 'Fatma Ozturk',
-    phone: '5341112233',
-    email: null,
-    address: 'Ulus Mah. Apt:5',
-    status: 'active',
-    totalOrders: 23,
-    totalSpent: 2875,
-    averageOrder: 125,
-    lastOrderAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    firstOrderAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
-    loyaltyPoints: 287,
-    platform: 'trendyol',
-  },
-  {
-    id: '5',
-    name: 'Can Yildirim',
-    phone: '5357778899',
-    email: 'can@email.com',
-    address: 'Etlik Mah. No:10',
-    status: 'lost',
-    totalOrders: 3,
-    totalSpent: 285,
-    averageOrder: 95,
-    lastOrderAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
-    firstOrderAt: new Date(Date.now() - 150 * 24 * 60 * 60 * 1000).toISOString(),
-    loyaltyPoints: 28,
-    platform: 'walkin',
-  },
-];
+// Customer interface
+interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  address: string;
+  status: string;
+  totalOrders: number;
+  totalSpent: number;
+  averageOrder: number;
+  lastOrderAt: string;
+  firstOrderAt: string;
+  loyaltyPoints: number;
+  platform: string;
+}
 
 // Customer Detail Modal
 function CustomerDetailModal({
   customer,
   onClose,
 }: {
-  customer: typeof mockCustomers[0];
+  customer: Customer;
   onClose: () => void;
 }) {
   const statusConfig = STATUS_CONFIG[customer.status];
@@ -247,28 +185,50 @@ export default function CustomersPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string | 'all'>('all');
-  const [selectedCustomer, setSelectedCustomer] = useState<typeof mockCustomers[0] | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // Fetch customers
-  const { data: customersData, isLoading, refetch } = useQuery({
+  const { data: customersData, isLoading, refetch } = useQuery<{ customers: Customer[]; total: number }>({
     queryKey: ['customers', selectedStatus, searchQuery],
     queryFn: async () => {
       try {
         const params: Record<string, string> = {};
         if (selectedStatus !== 'all') params.status = selectedStatus;
         if (searchQuery) params.search = searchQuery;
-        const response = await api.get('/customers', { params });
-        return response.data;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await api.get('/customers', { params });
+        const data = response.data || {};
+
+        // Map API response to frontend format
+        const customersArr = data.customers || data || [];
+        const customers: Customer[] = Array.isArray(customersArr) ? customersArr.map((c: Record<string, unknown>) => ({
+          id: String(c.id || ''),
+          name: String(c.name || ''),
+          phone: String(c.phone || ''),
+          email: c.email ? String(c.email) : null,
+          address: String(c.defaultAddress || c.address || ''),
+          status: String(c.status || 'active').toLowerCase(),
+          totalOrders: parseInt(String(c.totalOrders || (c._count as { orders?: number })?.orders || 0)),
+          totalSpent: parseFloat(String(c.totalSpent || 0)),
+          averageOrder: parseFloat(String(c.averageOrderValue || c.averageOrder || 0)),
+          lastOrderAt: String(c.lastOrderAt || new Date().toISOString()),
+          firstOrderAt: String(c.firstOrderAt || new Date().toISOString()),
+          loyaltyPoints: parseInt(String(c.loyaltyPoints || 0)),
+          platform: String(c.preferredPlatform || c.platform || 'direct'),
+        })) : [];
+
+        return { customers, total: data.total || customers.length };
       } catch {
-        return { customers: mockCustomers, total: mockCustomers.length };
+        return { customers: [], total: 0 };
       }
     },
   });
 
-  const customers = customersData?.customers || mockCustomers;
+  const customers = customersData?.customers || [];
 
   // Filter customers
-  const filteredCustomers = customers.filter((customer: typeof mockCustomers[0]) => {
+  const filteredCustomers = customers.filter((customer: Customer) => {
     if (selectedStatus !== 'all' && customer.status !== selectedStatus) return false;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -284,9 +244,9 @@ export default function CustomersPage() {
   // Stats
   const stats = {
     total: customers.length,
-    vip: customers.filter((c: typeof mockCustomers[0]) => c.status === 'vip').length,
-    active: customers.filter((c: typeof mockCustomers[0]) => c.status === 'active').length,
-    sleeping: customers.filter((c: typeof mockCustomers[0]) => c.status === 'sleeping').length,
+    vip: customers.filter((c: Customer) => c.status === 'vip').length,
+    active: customers.filter((c: Customer) => c.status === 'active').length,
+    sleeping: customers.filter((c: Customer) => c.status === 'sleeping').length,
   };
 
   return (
@@ -414,7 +374,7 @@ export default function CustomersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredCustomers.map((customer: typeof mockCustomers[0]) => {
+                {filteredCustomers.map((customer: Customer) => {
                   const statusConfig = STATUS_CONFIG[customer.status];
                   return (
                     <tr

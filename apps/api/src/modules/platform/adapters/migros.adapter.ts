@@ -94,14 +94,35 @@ interface MigrosActiveOrdersResponse {
 
 /**
  * Migros status to internal status mapping
+ * Note: Migros uses different status names - we map all variants
  */
 const MIGROS_STATUS_MAP: Record<string, OrderStatus> = {
-  COLLECTING: 'PENDING',
+  // New/Waiting statuses
+  NEW: 'PENDING',
+  WAITING: 'PENDING',
+  // Collecting = Restaurant confirmed, waiting for preparation
+  COLLECTING: 'CONFIRMED',
+  // Confirmed/Accepted statuses
+  ACCEPTED: 'CONFIRMED',
+  CONFIRMED: 'CONFIRMED',
+  RESTAURANT_APPROVED: 'CONFIRMED',
+  APPROVED: 'CONFIRMED',
+  // Preparing status
   PREPARING: 'PREPARING',
+  IN_PREPARATION: 'PREPARING',
+  // Ready status
   READY: 'READY',
+  READY_FOR_PICKUP: 'READY',
+  // Delivery statuses
   DELIVERING: 'ON_DELIVERY',
+  ON_DELIVERY: 'ON_DELIVERY',
+  ON_THE_WAY: 'ON_DELIVERY',
+  IN_DELIVERY: 'ON_DELIVERY',
+  // Final statuses
   DELIVERED: 'DELIVERED',
+  COMPLETED: 'DELIVERED',
   CANCELLED: 'CANCELLED',
+  REJECTED: 'CANCELLED',
 };
 
 /**
@@ -125,6 +146,7 @@ export class MigrosAdapter implements PlatformAdapter, OnModuleInit {
   // API Configuration
   private readonly baseUrl = 'https://restoran.migrosonline.com/rest';
   private readonly storeId = 23000000157905; // 312 Döner & Izgara store ID
+  private readonly updaterId = 38836; // User ID from JWT claims (userdata)
 
   // Turnstile Solver Configuration
   private readonly turnstileSolverUrl = 'http://127.0.0.1:5000';
@@ -567,6 +589,11 @@ export class MigrosAdapter implements PlatformAdapter, OnModuleInit {
 
       for (const storeData of response.data) {
         for (const migrosOrder of storeData.activeOrderDetailsDTOS) {
+          // Log raw order data for debugging status field
+          this.logger.debug(
+            `Migros raw order: id=${migrosOrder.id}, status="${migrosOrder.status}", ` +
+            `paymentType="${migrosOrder.paymentType}", customer="${migrosOrder.customerFullName}"`,
+          );
           const platformOrder = this.transformOrder(migrosOrder);
           orders.push(platformOrder);
         }
@@ -625,9 +652,22 @@ export class MigrosAdapter implements PlatformAdapter, OnModuleInit {
     // Calculate subtotal from items
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
+    // Map Migros status to internal status
+    const migrosStatus = migrosOrder.status?.toUpperCase() || 'UNKNOWN';
+    const platformStatus = MIGROS_STATUS_MAP[migrosStatus] || MIGROS_STATUS_MAP[migrosOrder.status] || 'PENDING';
+
+    // Log status mapping for debugging
+    if (!MIGROS_STATUS_MAP[migrosStatus] && !MIGROS_STATUS_MAP[migrosOrder.status]) {
+      this.logger.warn(`Unknown Migros status: "${migrosOrder.status}" for order ${migrosOrder.id}, defaulting to PENDING`);
+    } else {
+      this.logger.debug(`Migros order ${migrosOrder.id}: status="${migrosOrder.status}" → ${platformStatus}`);
+    }
+
     return {
       platformOrderId: `MIGROS-${migrosOrder.id}`,
+      platformDisplayId: String(migrosOrder.id),
       platform: Platform.MIGROS,
+      platformStatus,
       customer: {
         name: migrosOrder.customerFullName,
         phone: this.formatPhone(migrosOrder.phoneNumber),
@@ -731,12 +771,13 @@ export class MigrosAdapter implements PlatformAdapter, OnModuleInit {
 
   /**
    * Update order status on Migros
+   * Uses Migros REST API endpoints with PUT method
    */
   async updateOrderStatus(platformOrderId: string, status: OrderStatus): Promise<boolean> {
     this.logger.debug(`Updating order status on Migros: ${platformOrderId} -> ${status}`);
 
     try {
-      const orderId = platformOrderId.replace('MIGROS-', '');
+      const orderId = parseInt(platformOrderId.replace('MIGROS-', ''), 10);
       const migrosStatus = INTERNAL_TO_MIGROS_STATUS[status];
 
       if (!migrosStatus) {
@@ -744,36 +785,51 @@ export class MigrosAdapter implements PlatformAdapter, OnModuleInit {
         return false;
       }
 
-      // Different endpoints for different status updates
-      let endpoint = '/Order/UpdateOrderStatus';
-      let body: Record<string, unknown> = {
-        orderId: parseInt(orderId, 10),
-        status: migrosStatus,
+      // Common body fields for all Migros status update endpoints
+      const baseBody = {
+        orderId,
+        updaterId: this.updaterId,
+        storeId: this.storeId,
+        ip: '127.0.0.1',
       };
 
-      // Special handling for status transitions
-      if (status === 'PREPARING') {
-        endpoint = '/Order/StartPreparing';
-        body = { orderId: parseInt(orderId, 10) };
-      } else if (status === 'READY') {
-        endpoint = '/Order/MarkAsReady';
-        body = { orderId: parseInt(orderId, 10) };
-      } else if (status === 'ON_DELIVERY') {
-        endpoint = '/Order/MarkAsDelivering';
-        body = { orderId: parseInt(orderId, 10) };
-      } else if (status === 'DELIVERED') {
-        endpoint = '/Order/MarkAsDelivered';
-        body = { orderId: parseInt(orderId, 10) };
+      let endpoint: string;
+      let method: 'PUT' | 'POST' = 'PUT';
+
+      // Different endpoints for different status transitions
+      switch (status) {
+        case 'PREPARING':
+          endpoint = '/Order/StartPreparation';
+          break;
+        case 'READY':
+          // Hazırlandı - Mark as prepared/ready for pickup
+          endpoint = '/Order/MarkOrderAsPrepared';
+          break;
+        case 'ON_DELIVERY':
+          // Yola Çıktı - Mark as on delivery
+          endpoint = '/Order/MarkOrderAsDelivery';
+          break;
+        case 'DELIVERED':
+          // Teslim Edildi - Mark as completed
+          endpoint = '/Order/MarkOrderAsCompleted';
+          break;
+        default:
+          this.logger.warn(`No Migros endpoint for status: ${status}`);
+          return false;
       }
 
-      const response = await this.apiRequest<{ success: boolean }>(endpoint, 'POST', body);
+      const response = await this.apiRequest<{ success: boolean; errorMessage?: string }>(
+        endpoint,
+        method,
+        baseBody,
+      );
 
       if (response.success) {
         this.logger.log(`Order status updated on Migros: ${platformOrderId} -> ${migrosStatus}`);
         return true;
       }
 
-      this.logger.warn(`Failed to update order status on Migros: ${platformOrderId}`);
+      this.logger.warn(`Failed to update order status on Migros: ${platformOrderId} - ${response.errorMessage || 'Unknown error'}`);
       return false;
     } catch (error) {
       this.logger.error(`Error updating Migros order status: ${error instanceof Error ? error.message : 'Unknown error'}`);

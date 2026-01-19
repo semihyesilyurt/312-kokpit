@@ -71,6 +71,7 @@ export interface Order {
   orderNumber: string;
   platform: Platform;
   platformOrderId?: string;
+  platformDisplayId?: string; // Platform's visible order number (e.g., Trendyol orderCode)
   status: OrderStatus;
   customer: {
     name: string;

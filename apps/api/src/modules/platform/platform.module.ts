@@ -5,6 +5,7 @@
  * - GetirAdapter implementation (real - 10s polling)
  * - MigrosAdapter implementation (real - 20s polling)
  * - TrendyolAdapter implementation (real - 10s polling)
+ * - YemeksepetiAdapter implementation (real - 10s polling, Playwright login)
  * - Cron job every 2 minutes for general order sync via BullMQ
  * - Platform status toggle and sync logging
  */
@@ -19,9 +20,11 @@ import { PlatformSyncScheduler } from './platform-sync.scheduler';
 import { MigrosSyncScheduler } from './migros-sync.scheduler';
 import { TrendyolSyncScheduler } from './trendyol-sync.scheduler';
 import { GetirSyncScheduler } from './getir-sync.scheduler';
+import { YemeksepetiSyncScheduler } from './yemeksepeti-sync.scheduler';
 import { GetirAdapter } from './adapters/getir.adapter';
 import { MigrosAdapter } from './adapters/migros.adapter';
 import { TrendyolAdapter } from './adapters/trendyol.adapter';
+import { YemeksepetiAdapter } from './adapters/yemeksepeti.adapter';
 import { OrderModule } from '@modules/order/order.module';
 
 @Module({
@@ -54,25 +57,37 @@ import { OrderModule } from '@modules/order/order.module';
     MigrosSyncScheduler,
     TrendyolSyncScheduler,
     GetirSyncScheduler,
+    YemeksepetiSyncScheduler,
     GetirAdapter,
     MigrosAdapter,
     TrendyolAdapter,
+    YemeksepetiAdapter,
     {
       provide: 'PLATFORM_ADAPTERS',
       useFactory: (
         getirAdapter: GetirAdapter,
         migrosAdapter: MigrosAdapter,
         trendyolAdapter: TrendyolAdapter,
+        yemeksepetiAdapter: YemeksepetiAdapter,
       ) => ({
         GETIR: getirAdapter,
         MIGROS: migrosAdapter,
         TRENDYOL: trendyolAdapter,
-        // Future adapters:
-        // YEMEKSEPETI: yemeksepetiAdapter,
+        YEMEKSEPETI: yemeksepetiAdapter,
       }),
-      inject: [GetirAdapter, MigrosAdapter, TrendyolAdapter],
+      inject: [GetirAdapter, MigrosAdapter, TrendyolAdapter, YemeksepetiAdapter],
     },
   ],
-  exports: [PlatformService, TrendyolSyncScheduler, GetirSyncScheduler],
+  exports: [
+    PlatformService,
+    TrendyolSyncScheduler,
+    GetirSyncScheduler,
+    YemeksepetiSyncScheduler,
+    'PLATFORM_ADAPTERS',
+    TrendyolAdapter,
+    GetirAdapter,
+    YemeksepetiAdapter,
+    MigrosAdapter,
+  ],
 })
 export class PlatformModule {}
