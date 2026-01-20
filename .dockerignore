@@ -1,0 +1,78 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+**/dist
+.next
+**/.next
+out
+**/out
+
+# Development files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files (will be injected at runtime)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+docs
+
+# Test files
+coverage
+**/__tests__
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Docker files (prevent recursive copy)
+Dockerfile*
+docker-compose*
+
+# Temporary files
+*.tmp
+*.temp
+.cache
+
+# Upload directories
+uploads
+**/uploads
+
+# Claude/AI files
+.claude
+kokpit.md
+claudedocs
+
+# Hosting files
+.htaccess
+.user.ini
+.well-known
+404.html
+502.html
+index.html
